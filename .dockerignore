@@ -1,0 +1,11 @@
+node_modules
+dist
+screenshots
+.git
+.gitignore
+.DS_Store
+tests
+scripts
+*.md
+Dockerfile
+.dockerignore

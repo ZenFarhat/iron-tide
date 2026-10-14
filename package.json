@@ -1,0 +1,18 @@
+{
+  "name": "iron-tide",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot server/index.ts",
+    "start": "NODE_ENV=production bun server/index.ts",
+    "build": "bun build ./client/index.html --outdir dist --minify",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "playwright-core": "^1.64.0",
+    "typescript": "^5.6.0"
+  }
+}
