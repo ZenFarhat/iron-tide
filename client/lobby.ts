@@ -133,7 +133,7 @@ export class Menu {
       <h2>Field manual</h2>
       <div class="help-cols">
       <div><h3>Getting started</h3><ol>
-        <li>Select your <b>Mobile Hub</b> and press <kbd>D</kbd> (or click it) to deploy your Command Hub.</li>
+        <li><b>Double-click</b> your <b>Mobile Hub</b> (or select it and press <kbd>D</kbd>) to deploy your Command Hub.</li>
         <li>Build a <b>Power</b> plant, then an <b>Ore Refinery</b> — it comes with a free harvester.</li>
         <li>Add <b>Barracks</b> and a vehicle factory, then tech up via radar and the tech lab.</li>
         <li>Keep power positive: low power slows production and shuts down defenses and radar.</li>

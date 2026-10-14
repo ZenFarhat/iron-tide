@@ -270,6 +270,12 @@ export class Input {
     const dbl = now - this.lastClick.t < 350 && this.lastClick.id === target.id;
     this.lastClick = { t: now, id: target.id };
     if (target.owner === g.me && target.kind !== "bld") {
+      if (dbl && target.type === "mhv") {
+        this.select([target.id], false);
+        g.send({ c: "deploy", ids: [target.id] });
+        this.ack();
+        return;
+      }
       if (dbl) {
         this.select(
           g.world.ents.filter((e) => !e.dead && e.owner === g.me && e.type === target.type && this.onScreen(e)).map((e) => e.id),

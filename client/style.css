@@ -114,6 +114,37 @@ canvas.view {
 .msg.fade {
   opacity: 0;
 }
+.start-hint {
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 6px;
+  background: #0b141dd0;
+  border: 1px solid #ffcf7088;
+  color: #ffe3a8;
+  font-size: 15px;
+  white-space: nowrap;
+  max-width: calc(100% - 32px);
+  pointer-events: none;
+  text-shadow: 0 1px 2px #000;
+  animation: hint-pulse 2s ease-in-out infinite;
+  transition: opacity 0.5s;
+}
+.start-hint span {
+  color: #9fb3c8;
+  font-size: 13px;
+}
+.start-hint.fade {
+  opacity: 0;
+}
+@keyframes hint-pulse {
+  50% {
+    border-color: #ffcf70;
+    box-shadow: 0 0 12px #ffcf7055;
+  }
+}
 .chat-input {
   display: none;
   position: absolute;

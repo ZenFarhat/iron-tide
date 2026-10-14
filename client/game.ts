@@ -43,6 +43,7 @@ export class Game {
   private refreshT = 0;
   private raf = 0;
   msgEl: HTMLDivElement;
+  hintEl: HTMLDivElement | null = null;
   topEl: HTMLDivElement;
   swEl: HTMLDivElement;
   overlayEl: HTMLDivElement | null = null;
@@ -127,6 +128,13 @@ export class Game {
       }
     });
     this.message(this.me >= 0 ? `${this.world.players[this.me].name}, deploy your Mobile Hub to begin: select it and press D.` : "Spectating.", "#cfe3ff");
+    if (this.me >= 0) {
+      const h = document.createElement("div");
+      h.className = "start-hint";
+      h.innerHTML = `<b>Double-click your Mobile Hub</b> to deploy your base <span>(or select it and press <kbd>D</kbd>)</span>`;
+      root.querySelector(".viewport")!.appendChild(h);
+      this.hintEl = h;
+    }
     this.audio.startMusic();
     this.last = performance.now();
     this.raf = requestAnimationFrame(this.frame);
@@ -179,6 +187,14 @@ export class Game {
       this.send({ c: "move", ids, x, y });
       this.audio.play("ack", 0.5);
     }
+  }
+
+  hideHint() {
+    const h = this.hintEl;
+    if (!h) return;
+    this.hintEl = null;
+    h.classList.add("fade");
+    setTimeout(() => h.remove(), 600);
   }
 
   message(text: string, color = "#e8f0ff") {
@@ -431,10 +447,13 @@ export class Game {
         if (ev.owner === this.me) this.audio.play("error");
         break;
       case "deploy":
-        if (ev.owner === this.me) this.audio.play("place", 0.8);
+        if (ev.owner === this.me) {
+          this.audio.play("place", 0.8);
+          this.hideHint();
+        }
         break;
       case "defeat":
-        if (ev.owner === this.me) this.message("You have been defeated.", "#ff7060");
+        if (ev.owner === this.me) this.message("You have been defeated.", "#ff7060"), this.hideHint();
         else this.message(`${w.players[ev.owner].name} was eliminated.`, "#ffcf70");
         break;
       case "gameover":
