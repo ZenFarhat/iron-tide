@@ -1,5 +1,5 @@
 // Browser entry point.
-import { Menu } from "./lobby";
+import { Menu, inviteCode } from "./lobby";
 import { Game } from "./game";
 import { World } from "../sim/world";
 import { LocalSession, NetSession } from "./net";
@@ -76,7 +76,12 @@ function prewarm(g: Game) {
   for (let j = 0; j < t.ch; j++) for (let i = 0; i < t.cw; i++) t.get(i, j);
 }
 
-menu.main();
+const invite = inviteCode();
+if (invite) {
+  // drop the code from the address bar so a later refresh doesn't rejoin
+  history.replaceState(null, "", location.pathname);
+  menu.joinInvite(invite);
+} else menu.main();
 
 // expose for debugging / automated tests
 (window as any).__ironTide = {

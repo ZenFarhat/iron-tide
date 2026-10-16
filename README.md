@@ -18,7 +18,7 @@ bun run dev        # http://localhost:3000  (serves the client and the multiplay
 ```
 
 - **Skirmish:** Main menu → *Skirmish vs AI*. Add up to three AI opponents (easy, normal or hard), with teams, map size, credits, game speed and superweapons configurable.
-- **Multiplayer:** Main menu → *Multiplayer* → *Create battle*. Share the 5-letter room code; others join by code or from the list, mark themselves ready, and the host starts. The host can set the game speed to 1×, 2×, 3×, 4× or 8×. Open two browser tabs to try it locally. Late joiners spectate, and the server replays the turn history so they catch up.
+- **Multiplayer:** Main menu → *Multiplayer* → *Create battle*. Click *Copy invite link* and send it: opening the link joins the room directly. Others can also join by the 5-letter room code or from the list, mark themselves ready, and the host starts. The host can set the game speed to 1×, 2×, 3×, 4× or 8×. Open two browser tabs to try it locally. Late joiners spectate, and the server replays the turn history so they catch up.
 - **Production:** `bun run start` (set `PORT` / `HOST`). `bun run build` also produces a static bundle in `dist/`, but online play needs the server.
 
 ## Docker / deploy

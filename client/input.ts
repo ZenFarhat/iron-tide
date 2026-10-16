@@ -6,6 +6,9 @@ import { CONSTRUCT_TICKS, RULES, SUPERWEAPONS, WEAPONS } from "../sim/rules";
 import { ZH } from "./render/iso";
 import type { CursorKind } from "./render/renderer";
 
+/** max gap between the clicks of a double-click (slower OS double-click settings are honoured too) */
+const DOUBLE_CLICK_MS = 350;
+
 interface Action {
   cursor: CursorKind;
   exec?: () => void;
@@ -16,7 +19,9 @@ export class Input {
   canvas: HTMLCanvasElement;
   down: { b: number; x: number; y: number; camX: number; camY: number; moved: boolean } | null = null;
   keys = new Set<string>();
-  lastClick = { t: 0, id: 0 };
+  /** last left-click on one of our units, for double-click detection */
+  lastClick = { t: 0, type: "" };
+  private deployTimer = 0;
   lastGroup = { k: -1, t: 0 };
   lastT = 0;
   lastP = 0;
@@ -49,6 +54,7 @@ export class Input {
 
   destroy() {
     for (const f of this.offs) f();
+    clearTimeout(this.deployTimer);
   }
 
   private local(e: MouseEvent): [number, number] {
@@ -260,15 +266,21 @@ export class Input {
     return x >= 0 && y >= 0 && x <= r.cam.vw && y <= r.cam.vh;
   }
 
-  private clickSelect(target: Entity | null, shift: boolean, now: number) {
+  /** a quick second click on one of our units of the type just clicked. Any unit of that type
+   *  counts, since clumped infantry shift under the cursor between the two clicks. */
+  private isDoubleClick(target: Entity | null, e: MouseEvent, now: number) {
+    if (!target || target.owner !== this.game.me || target.kind === "bld" || target.type !== this.lastClick.type) return false;
+    const gap = now - this.lastClick.t;
+    return gap < DOUBLE_CLICK_MS || (e.detail >= 2 && gap < 700);
+  }
+
+  private clickSelect(target: Entity | null, shift: boolean, dbl: boolean) {
     const g = this.game;
     const s = g.vs.selection;
     if (!target) {
       if (!shift) s.clear();
       return;
     }
-    const dbl = now - this.lastClick.t < 350 && this.lastClick.id === target.id;
-    this.lastClick = { t: now, id: target.id };
     if (target.owner === g.me && target.kind !== "bld") {
       if (dbl && target.type === "mhv") {
         this.select([target.id], false);
@@ -376,14 +388,27 @@ export class Input {
         this.resolve(target, cx, cy, mods).exec?.();
         return;
       }
+      // the second click of a double-click always selects the whole type; it must not run the
+      // order the first click's selection would imply (deploying the trooper it just selected)
+      const dbl = this.isDoubleClick(target, e, now);
+      this.lastClick = target && target.owner === g.me && target.kind !== "bld" ? { t: now, type: target.type } : { t: 0, type: "" };
+      if (dbl) {
+        clearTimeout(this.deployTimer);
+        this.clickSelect(target, mods.shift, true);
+        return;
+      }
       if (g.controls === "classic") {
         const act = this.resolve(target, cx, cy, mods);
         if (act.exec && act.cursor !== "select") {
-          act.exec();
+          if (act.cursor === "deploy") {
+            // clicking a selected unit deploys it, once it's clear this isn't a double-click
+            clearTimeout(this.deployTimer);
+            this.deployTimer = window.setTimeout(act.exec, DOUBLE_CLICK_MS);
+          } else act.exec();
           return;
         }
       }
-      this.clickSelect(target, mods.shift, now);
+      this.clickSelect(target, mods.shift, false);
       return;
     }
     if (d.b === 2 && !d.moved) {

@@ -68,6 +68,37 @@ function settingsHtml(s: LobbySettings, editable: boolean, seed?: number) {
     ${seed !== undefined ? `<label>Map seed<input data-s="seed" type="number" value="${seed}" ${dis}/></label>` : ""}
   </div>`;
 }
+/** link that opens the game straight into a room */
+export function inviteUrl(code: string) {
+  return `${location.origin}${location.pathname}?join=${encodeURIComponent(code)}`;
+}
+
+/** the room code from an invite link, if the page was opened with one */
+export function inviteCode(): string | null {
+  const c = new URLSearchParams(location.search).get("join");
+  return c && /^[A-Za-z0-9]{3,8}$/.test(c) ? c.toUpperCase() : null;
+}
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // the async clipboard API needs https (or localhost); fall back to a selection copy
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:fixed;opacity:0";
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {}
+    ta.remove();
+    return ok;
+  }
+}
+
 function readSettings(root: HTMLElement): Partial<LobbySettings> & { seed?: number } {
   const out: any = {};
   root.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-s]").forEach((el) => {
@@ -234,6 +265,12 @@ export class Menu {
 
   // ───────────────────────────── online ─────────────────────────────
 
+  /** opened from an invite link: connect and go straight into the room */
+  async joinInvite(code: string) {
+    await this.online();
+    this.net?.sendRaw({ t: "join", id: code });
+  }
+
   async online() {
     this.show(`<div class="panel"><h2>Connecting…</h2></div>`);
     if (!this.net) this.net = new Net();
@@ -337,7 +374,7 @@ export class Menu {
         <td>${s.kind === "human" ? (s.clientId === r.hostId ? "" : s.ready ? '<span class="ready">READY</span>' : '<span class="dim">not ready</span>') : ""}</td></tr>`;
     };
     this.show(`<div class="panel lobby-panel room-panel">
-      <h2>${esc(r.name)} <span class="code">#${r.id}</span></h2>
+      <div class="room-head"><h2>${esc(r.name)} <span class="code">#${r.id}</span></h2><button class="small" id="rm-invite" title="${esc(inviteUrl(r.id))}">🔗 Copy invite link</button></div>
       <table class="slots"><tr><th>Player</th><th>Faction</th><th>Color</th><th>Team</th><th></th></tr>${r.slots.map(slotRow).join("")}</table>
       ${r.spectators.length ? `<p class="dim">Spectators: ${r.spectators.map(esc).join(", ")}</p>` : ""}
       ${settingsHtml(r.settings, host)}
@@ -370,6 +407,14 @@ export class Menu {
         net.sendRaw({ t: "chat", text: chat.value.trim() });
         chat.value = "";
       }
+    };
+    const invite = this.root.querySelector<HTMLButtonElement>("#rm-invite")!;
+    invite.onclick = async () => {
+      const url = inviteUrl(r.id);
+      if (await copyText(url)) {
+        invite.textContent = "✓ Link copied";
+        setTimeout(() => invite.isConnected && (invite.textContent = "🔗 Copy invite link"), 1800);
+      } else prompt("Copy this invite link:", url);
     };
     this.root.querySelector<HTMLButtonElement>("#rm-leave")!.onclick = () => {
       net.sendRaw({ t: "leave" });
