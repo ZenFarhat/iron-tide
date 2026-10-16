@@ -1,5 +1,5 @@
 // Menus: main menu, skirmish setup, multiplayer browser and room lobby.
-import { DEFAULT_LOBBY, MAX_SLOTS, PLAYER_COLORS, type AIDifficulty, type LobbySettings, type RoomState, type RoomSummary, type ServerMsg, type SlotFaction, type StartPlayer, type Turn } from "../shared/protocol";
+import { DEFAULT_LOBBY, GAME_SPEEDS, MAX_SLOTS, PLAYER_COLORS, type AIDifficulty, type LobbySettings, type RoomState, type RoomSummary, type ServerMsg, type SlotFaction, type StartPlayer, type Turn } from "../shared/protocol";
 import { FACTIONS } from "../sim/rules";
 import { Net } from "./net";
 
@@ -62,6 +62,7 @@ function settingsHtml(s: LobbySettings, editable: boolean, seed?: number) {
     <label>Map<select data-s="mapSize" ${dis}>${MAP_SIZES.map(([v, n]) => `<option value="${v}" ${v === s.mapSize ? "selected" : ""}>${n}</option>`).join("")}</select></label>
     <label>Credits<select data-s="credits" ${dis}>${CREDITS.map((v) => `<option value="${v}" ${v === s.credits ? "selected" : ""}>$${v.toLocaleString()}</option>`).join("")}</select></label>
     <label>Starting units<select data-s="startUnits" ${dis}>${[0, 1, 2, 3, 5, 10].map((v) => `<option value="${v}" ${v === s.startUnits ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+    <label>Game speed<select data-s="speed" ${dis}>${GAME_SPEEDS.map((v) => `<option value="${v}" ${v === s.speed ? "selected" : ""}>${v}×${v === 1 ? " (normal)" : ""}</option>`).join("")}</select></label>
     <label class="chk"><input type="checkbox" data-s="superweapons" ${s.superweapons ? "checked" : ""} ${dis}/> Superweapons</label>
     <label class="chk"><input type="checkbox" data-s="shortGame" ${s.shortGame ? "checked" : ""} ${dis}/> Short game</label>
     ${seed !== undefined ? `<label>Map seed<input data-s="seed" type="number" value="${seed}" ${dis}/></label>` : ""}

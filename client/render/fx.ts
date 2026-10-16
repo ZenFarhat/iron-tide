@@ -116,6 +116,8 @@ export class Fx {
   teleports: { x: number; y: number; t: number; life: number }[] = [];
   bulwarks: { x: number; y: number; t: number; life: number }[] = [];
   time = 0;
+  /** game speed; delayed effects (staggered explosions) are scheduled in game time */
+  speed = 1;
 
   add(p: Partial<Particle> & { k: PKind; x: number; y: number }) {
     if (this.parts.length > 2500) return;
@@ -279,7 +281,7 @@ export class Fx {
               const ox = ((rnd() - 0.5) * s * 256) / 1.2,
                 oy = ((rnd() - 0.5) * s * 256) / 1.2;
               this.explosion(ev.x + ox, ev.y + oy, 40 + rnd() * 80, 0.8 + rnd() * 0.8);
-            }, i * 110);
+            }, (i * 110) / this.speed);
           }
           this.decals.push({ kind: "rubble", x: ev.x, y: ev.y, t: 0, life: 60, size: s * 22, rot: 0 });
           this.shake = Math.max(this.shake, 4 + s);
@@ -325,7 +327,7 @@ export class Fx {
         for (let i = 0; i < 40; i++) {
           const a = rnd() * Math.PI * 2,
             d = rnd() * 900;
-          setTimeout(() => this.explosion(ev.x + Math.cos(a) * d, ev.y + Math.sin(a) * d, rnd() * 100, 1 + rnd()), rnd() * 900);
+          setTimeout(() => this.explosion(ev.x + Math.cos(a) * d, ev.y + Math.sin(a) * d, rnd() * 100, 1 + rnd()), (rnd() * 900) / this.speed);
         }
         // mushroom column
         for (let i = 0; i < 60; i++) {

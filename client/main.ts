@@ -34,6 +34,7 @@ const menu: Menu = new Menu(menuRoot, {
         world,
         session,
         audio,
+        speed: s.settings.speed,
         onExit: () => {
           game = null;
           menu.main();
@@ -56,6 +57,7 @@ const menu: Menu = new Menu(menuRoot, {
         world,
         session,
         audio,
+        speed: s.settings.speed,
         onExit: () => {
           game = null;
           s.net.sendRaw({ t: "leave" });

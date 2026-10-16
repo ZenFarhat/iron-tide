@@ -2,6 +2,7 @@
 import type { Game } from "../game";
 import { RULES, SUPERWEAPONS, buildTicks, buildablesFor, type Queue, type Rule } from "../../sim/rules";
 import { iconCanvas, teamHex } from "../render/sprites";
+import type { Player } from "../../sim/entity";
 
 type Tab = "bld" | "def" | "inf" | "veh";
 const TABS: { id: Tab; label: string; key: string; queues: Queue[] }[] = [
@@ -133,13 +134,14 @@ export class Sidebar {
       return;
     }
     // tab availability
+    const { queues, ready } = this.prod(p);
     for (const t of TABS) {
       const n = this.items(t.id).length;
       const el = this.tabEls.get(t.id)!;
       el.classList.toggle("empty", n === 0);
-      const busy = t.queues.some((q) => p.queues[q].length > 0 || (q === "bld" || q === "def" ? !!p.ready[q] : false));
+      const busy = t.queues.some((q) => queues[q].length > 0 || (q === "bld" || q === "def" ? !!ready[q] : false));
       el.classList.toggle("busy", busy);
-      el.classList.toggle("ready", t.queues.some((q) => (q === "bld" || q === "def") && !!p.ready[q]));
+      el.classList.toggle("ready", t.queues.some((q) => (q === "bld" || q === "def") && !!ready[q]));
     }
     const items = this.items(this.tab);
     const key = this.tab + ":" + items.map((r) => r.id).join(",");
@@ -214,6 +216,11 @@ export class Sidebar {
     this.tooltip.style.top = `${Math.min(window.innerHeight - this.tooltip.offsetHeight - 8, rect.top)}px`;
   }
 
+  /** production state including clicks the server hasn't echoed back yet */
+  private prod(p: Player) {
+    return this.game.opt.production(this.game.world, p);
+  }
+
   private click(r: Rule, ev: MouseEvent) {
     ev.preventDefault();
     const g = this.game;
@@ -222,16 +229,17 @@ export class Sidebar {
     g.audio.unlock();
     const q = r.queue!;
     const isBld = q === "bld" || q === "def";
-    const head = p.queues[q][0];
+    const { queues, ready } = this.prod(p);
+    const head = queues[q][0];
     if (ev.button === 2) {
       // right: hold, then cancel
-      if (isBld && p.ready[q] === r.id) {
+      if (isBld && ready[q] === r.id) {
         g.send({ c: "cancel", type: r.id });
         if (g.vs.mode.kind === "place") g.setMode({ kind: "none" });
         g.audio.play("click");
         return;
       }
-      const has = p.queues[q].some((i) => i.type === r.id);
+      const has = queues[q].some((i) => i.type === r.id);
       if (!has) return;
       if (head && head.type === r.id && !head.hold) g.send({ c: "hold", type: r.id });
       else g.send({ c: "cancel", type: r.id, all: ev.shiftKey });
@@ -239,7 +247,7 @@ export class Sidebar {
       return;
     }
     if (ev.button !== 0) return;
-    if (isBld && p.ready[q] === r.id) {
+    if (isBld && ready[q] === r.id) {
       g.setMode({ kind: "place", type: r.id });
       g.audio.play("click");
       return;
@@ -249,7 +257,7 @@ export class Sidebar {
       g.audio.play("click");
       return;
     }
-    if (isBld && (p.queues[q].length || p.ready[q])) {
+    if (isBld && (queues[q].length || ready[q])) {
       g.audio.play("error");
       g.audio.eva("Unable to comply, building in progress");
       return;
@@ -278,17 +286,18 @@ export class Sidebar {
     this.btnRepair.classList.toggle("active", g.vs.mode.kind === "repair");
     this.btnSell.classList.toggle("active", g.vs.mode.kind === "sell");
     // cameo overlays
+    const { queues, ready } = this.prod(p);
     for (const c of this.cameos) {
       const r = RULES[c.type];
       const q = r.queue!;
-      const list = p.queues[q];
+      const list = queues[q];
       const n = list.filter((i) => i.type === c.type).length;
       const head = list[0];
       let pct = 0,
         state = "";
-      if ((q === "bld" || q === "def") && p.ready[q] === c.type) state = "READY";
+      if ((q === "bld" || q === "def") && ready[q] === c.type) state = "READY";
       else if (head && head.type === c.type) {
-        pct = head.progress / (buildTicks(r.cost) * 100);
+        pct = Math.max(0.0001, head.progress / (buildTicks(r.cost) * 100));
         if (head.hold) state = "ON HOLD";
         else if (head.progress >= buildTicks(r.cost) * 100) state = "WAITING";
       } else if (n > 0) pct = 0.0001;
@@ -297,7 +306,7 @@ export class Sidebar {
       c.state.textContent = state;
       c.root.classList.toggle("is-ready", state === "READY");
       c.root.classList.toggle("is-hold", state === "ON HOLD");
-      const busyOther = (q === "bld" || q === "def") && (p.ready[q] || (head && head.type !== c.type));
+      const busyOther = (q === "bld" || q === "def") && (ready[q] || (head && head.type !== c.type));
       c.root.classList.toggle("dim", !!busyOther && state === "");
     }
   }

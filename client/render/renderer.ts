@@ -23,6 +23,7 @@ import {
   vehicleTurret,
 } from "./sprites";
 import { Fx } from "./fx";
+import { MARK_LIFE, type MarkKind, type Optimistic } from "../optimistic";
 
 export type CursorKind =
   | "default"
@@ -63,7 +64,19 @@ export interface ViewState {
   cursor: CursorKind;
   groups: Map<number, number>; // entity id → group number
   showAllHealth: boolean;
+  /** the local player's unconfirmed commands and click markers */
+  opt: Optimistic;
 }
+
+const MARK_RGB: Record<MarkKind, string> = {
+  move: "120,255,140",
+  amove: "255,150,80",
+  attack: "255,80,70",
+  enter: "110,200,255",
+  harvest: "255,210,90",
+  rally: "235,240,255",
+  sw: "255,220,120",
+};
 
 export class Camera {
   x = 0;
@@ -86,7 +99,11 @@ export class Renderer {
   shroud: HTMLCanvasElement;
   shroudVersion = -1;
   colorOf: (owner: number) => number;
+  /** game-time clock for world animation; uiTime is real time for cursors and click feedback */
   time = 0;
+  uiTime = 0;
+  /** game seconds per real second this frame (0 while paused); scales per-frame particle spawns */
+  private simRate = 1;
   private trailT = 0;
 
   constructor(canvas: HTMLCanvasElement, world: World, fx: Fx) {
@@ -210,8 +227,10 @@ export class Renderer {
     g.putImageData(img, 0, 0);
   }
 
-  draw(alpha: number, vs: ViewState, dt: number) {
-    this.time += dt;
+  draw(alpha: number, vs: ViewState, dt: number, simDt = dt) {
+    this.time += simDt;
+    this.uiTime += dt;
+    this.simRate = dt > 0 ? simDt / dt : 1;
     const g = this.g;
     const w = this.world;
     const cam = this.cam;
@@ -283,7 +302,12 @@ export class Renderer {
       const [x, y, zz] = this.lerpPos(e, alpha);
       const [sx, sy] = toScreen(x, y, zz);
       if (!inView(sx, sy)) continue;
-      const item = { d: (x + y) / 256, k: e.kind === "inf" ? 2 : 1, e, x: sx, y: sy, z: zz };
+      let d = (x + y) / 256;
+      // units standing on a structure (jets on pads, vehicles in a repair bay) sit on top of it;
+      // sorting by the structure's centre would otherwise hide the ones on its back half
+      const host = w.bldAt[e.cell] ? w.get(w.bldAt[e.cell]) : undefined;
+      if (host) d = Math.max(d, host.bx + host.r.w / 2 + host.by + host.r.h / 2 + 0.01 + d * 1e-4);
+      const item = { d, k: e.kind === "inf" ? 2 : 1, e, x: sx, y: sy, z: zz };
       if (e.kind === "air" && zz > 30) {
         air.push(item);
         // shadow
@@ -306,6 +330,14 @@ export class Renderer {
         if (!inView(sx, sy)) continue;
         list.push({ d: x + y + 1, k: t === T_TREE ? 3 : 4, x: sx, y: sy, z: 0, v: m.variant[i] });
       }
+    // structures placed by us but not started by the sim yet (optimistic preview)
+    if (me >= 0)
+      vs.opt.pending.forEach((pc, i) => {
+        const r = pc.cmd.c === "place" ? RULES[pc.cmd.type] : undefined;
+        if (!r || pc.cmd.c !== "place") return;
+        const [sx, sy] = toScreen(pc.cmd.x * 256, pc.cmd.y * 256, 0);
+        list.push({ d: pc.cmd.x + r.w / 2 + pc.cmd.y + r.h / 2, k: 7, x: sx, y: sy, z: 0, v: i });
+      });
     // wrecks & corpses
     for (const c of this.fx.wrecks) {
       const [sx, sy] = toScreen(c.x, c.y, 0);
@@ -349,6 +381,11 @@ export class Renderer {
           drawSprite(g, vehicleBody(c.type, facing32(c.facing), this.team(c.owner), 0.65), it.x, it.y, a);
           break;
         }
+        case 7: {
+          const cmd = vs.opt.pending[it.v!].cmd;
+          if (cmd.c === "place") this.drawPendingPlacement(cmd.type, cmd.x, cmd.y, it.x, it.y, me);
+          break;
+        }
         case 6: {
           const c = this.fx.corpses[it.v!];
           const a = Math.min(1, (c.life - c.t) / 2);
@@ -359,7 +396,7 @@ export class Renderer {
     }
 
     // projectiles
-    this.drawProjectiles(alpha, inView, dt);
+    this.drawProjectiles(alpha, inView, simDt);
     // aircraft
     air.sort((a, b) => a.d - b.d);
     for (const it of air) this.drawVehicle(it.e!, it.x, it.y);
@@ -394,7 +431,7 @@ export class Renderer {
       g.fillRect(x, y, Math.abs(b.x1 - b.x0), Math.abs(b.y1 - b.y0));
       g.strokeRect(x + 0.5, y + 0.5, Math.abs(b.x1 - b.x0), Math.abs(b.y1 - b.y0));
     }
-    if (vs.mouse.inside) drawCursor(g, vs.cursor, vs.mouse.x, vs.mouse.y, this.time);
+    if (vs.mouse.inside) drawCursor(g, vs.cursor, vs.mouse.x, vs.mouse.y, this.uiTime);
   }
 
   private drawPlacement(vs: ViewState) {
@@ -496,14 +533,92 @@ export class Renderer {
     }
     if (e.invuln > w.tick) this.invulnGlow(sp, sx, sy);
     // damage smoke / fire
-    if (damaged && Math.random() < 0.08 * Math.max(r.w, 1)) {
+    if (damaged && this.chance(0.08 * Math.max(r.w, 1))) {
       const fx = (e.bx + 0.2 + Math.random() * (r.w - 0.4)) * 256,
         fy = (e.by + 0.2 + Math.random() * (r.h - 0.4)) * 256;
       this.fx.smoke(fx, fy, sm.height * 200, 5, 0.75, 2);
       if (e.hp < r.hp * 0.25) this.fx.fire(fx, fy, sm.height * 150, 5);
     }
-    if (e.repairing && Math.random() < 0.15) this.fx.sparks(e.x, e.y, sm.height * 220, 2, [255, 255, 140]);
+    if (e.repairing && this.chance(0.15)) this.fx.sparks(e.x, e.y, sm.height * 220, 2, [255, 255, 140]);
     void vs;
+  }
+
+  /** corner brackets around a unit (selection, or a flashing order target) */
+  private bracket(e: Entity, sx: number, sy: number, color: string) {
+    const g = this.g;
+    const inf = e.kind === "inf";
+    const bw = inf ? 14 : 34,
+      bh = inf ? 24 : 26;
+    const cy = sy - (inf ? 12 : 8);
+    const x0 = sx - bw / 2,
+      y0 = cy - bh / 2,
+      x1 = sx + bw / 2,
+      y1 = cy + bh / 2,
+      L = inf ? 4 : 6;
+    g.strokeStyle = color;
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(x0, y0 + L);
+    g.lineTo(x0, y0);
+    g.lineTo(x0 + L, y0);
+    g.moveTo(x1 - L, y0);
+    g.lineTo(x1, y0);
+    g.lineTo(x1, y0 + L);
+    g.moveTo(x1, y1 - L);
+    g.lineTo(x1, y1);
+    g.lineTo(x1 - L, y1);
+    g.moveTo(x0 + L, y1);
+    g.lineTo(x0, y1);
+    g.lineTo(x0, y1 - L);
+    g.stroke();
+  }
+
+  /** a structure the local player has placed but the sim hasn't started yet */
+  private drawPendingPlacement(type: string, bx: number, by: number, sx: number, sy: number, me: number) {
+    const r = RULES[type];
+    this.footprintRect(bx, by, r.w, r.h, "rgba(150,230,255,0.6)");
+    drawSprite(this.g, structGhost(r.id, this.team(me)), sx, sy, 0.55 + 0.2 * Math.sin(this.uiTime * 10));
+  }
+
+  /** instant feedback for the local player's orders while their turn is in flight */
+  private drawFeedback(vs: ViewState, alpha: number) {
+    const g = this.g;
+    const w = this.world;
+    const pulse = 0.45 + 0.35 * Math.sin(this.uiTime * 14);
+    for (const { cmd } of vs.opt.pending) {
+      if (cmd.c !== "sell" && cmd.c !== "repair") continue;
+      const e = w.get(cmd.t);
+      if (e) this.footprint(e, cmd.c === "sell" ? `rgba(255,210,90,${pulse})` : `rgba(120,255,140,${pulse})`);
+    }
+    for (const m of vs.opt.marks) {
+      const k = m.t / MARK_LIFE;
+      const rgb = MARK_RGB[m.kind];
+      if (m.target) {
+        // flash the target three times
+        const e = w.get(m.target);
+        if (!e || Math.floor(k * 6) % 2) continue;
+        if (e.kind === "bld") this.footprint(e, `rgba(${rgb},0.95)`);
+        else {
+          const [x, y, zz] = this.lerpPos(e, alpha);
+          const [sx, sy] = toScreen(x, y, zz);
+          this.bracket(e, sx, sy, `rgba(${rgb},0.95)`);
+        }
+        continue;
+      }
+      // ground marker: a ring that snaps inward onto the clicked spot
+      const [sx, sy] = toScreen(m.x, m.y, 0);
+      const r = 5 + 17 * (1 - k) * (1 - k);
+      g.lineWidth = 2;
+      g.strokeStyle = `rgba(${rgb},${1 - k})`;
+      g.beginPath();
+      g.ellipse(sx, sy, r, r / 2, 0, 0, TAU);
+      g.stroke();
+      g.lineWidth = 1;
+      g.strokeStyle = `rgba(${rgb},${0.8 * (1 - k)})`;
+      g.beginPath();
+      g.ellipse(sx, sy, 4, 2, 0, 0, TAU);
+      g.stroke();
+    }
   }
 
   private invulnGlow(sp: { c: HTMLCanvasElement; ox: number; oy: number; s: number }, sx: number, sy: number) {
@@ -516,12 +631,21 @@ export class Renderer {
     g.restore();
   }
 
+  /** per-frame random spawn with probability p at normal speed */
+  private chance(p: number) {
+    return Math.random() < p * this.simRate;
+  }
+
   private footprint(e: Entity, color: string) {
+    this.footprintRect(e.bx, e.by, e.r.w, e.r.h, color);
+  }
+
+  private footprintRect(bx: number, by: number, w: number, h: number, color: string) {
     const g = this.g;
-    const x0 = e.bx,
-      y0 = e.by,
-      x1 = e.bx + e.r.w,
-      y1 = e.by + e.r.h;
+    const x0 = bx,
+      y0 = by,
+      x1 = bx + w,
+      y1 = by + h;
     const P = [
       [x0, y0],
       [x1, y0],
@@ -553,9 +677,9 @@ export class Renderer {
       if (t) drawSprite(g, t, sx + (rx - ry) * HW, sy + (rx + ry) * HH - pz * ZH);
     }
     if (e.invuln > this.world.tick) this.invulnGlow(body, sx, sy);
-    if (dark && Math.random() < 0.05) this.fx.smoke(e.x, e.y, e.z + 60, 3, 0.8, 1.2);
-    if (e.r.harvester && e.harv === "mining" && Math.random() < 0.25) this.fx.add({ k: "dust", x: e.x + (Math.random() - 0.5) * 120, y: e.y + (Math.random() - 0.5) * 120, z: 10, vz: 30, life: 0.8, size: 3, grow: 6, r: 170, g: 150, b: 90, a: 0.4 });
-    if (e.kind === "air" && e.z > 100 && e.r.jet && Math.random() < 0.3) {
+    if (dark && this.chance(0.05)) this.fx.smoke(e.x, e.y, e.z + 60, 3, 0.8, 1.2);
+    if (e.r.harvester && e.harv === "mining" && this.chance(0.25)) this.fx.add({ k: "dust", x: e.x + (Math.random() - 0.5) * 120, y: e.y + (Math.random() - 0.5) * 120, z: 10, vz: 30, life: 0.8, size: 3, grow: 6, r: 170, g: 150, b: 90, a: 0.4 });
+    if (e.kind === "air" && e.z > 100 && e.r.jet && this.chance(0.3)) {
       const a = (e.facing / 256) * TAU;
       this.fx.add({ k: "glow", x: e.x - Math.cos(a) * 110, y: e.y - Math.sin(a) * 110, z: e.z, life: 0.15, size: 2.5, grow: -1, r: 255, g: 200, b: 120, a: 0.8, add: true });
     }
@@ -674,8 +798,11 @@ export class Renderer {
         const [sx, sy] = toScreen(e.bx * 256, e.by * 256, 0);
         const topY = sy - sm.height * ZH - 8;
         this.healthBar(sx + ((e.r.w - e.r.h) * HW) / 2, Math.min(topY, sy + ((e.r.w + e.r.h) * HH) / 2 - 30), e, Math.min(20, 6 + e.r.w * 4));
-        if (sel && e.rallyX >= 0) {
-          const [rx, ry] = toScreen(e.rallyX * 256 + 128, e.rallyY * 256 + 128, 0);
+        const rally = e.owner === me ? vs.opt.latestFor("rally", e.id) : undefined;
+        const rallyX = rally ? rally.x : e.rallyX,
+          rallyY = rally ? rally.y : e.rallyY;
+        if (sel && rallyX >= 0) {
+          const [rx, ry] = toScreen(rallyX * 256 + 128, rallyY * 256 + 128, 0);
           const [cx, cy] = toScreen(e.x, e.y, 0);
           g.setLineDash([4, 4]);
           g.strokeStyle = "rgba(255,255,255,0.6)";
@@ -703,29 +830,7 @@ export class Renderer {
       const bw = inf ? 14 : 34,
         bh = inf ? 24 : 26;
       const cy = sy - (inf ? 12 : 8);
-      if (sel) {
-        g.strokeStyle = "rgba(255,255,255,0.95)";
-        g.lineWidth = 1;
-        const x0 = sx - bw / 2,
-          y0 = cy - bh / 2,
-          x1 = sx + bw / 2,
-          y1 = cy + bh / 2,
-          L = inf ? 4 : 6;
-        g.beginPath();
-        g.moveTo(x0, y0 + L);
-        g.lineTo(x0, y0);
-        g.lineTo(x0 + L, y0);
-        g.moveTo(x1 - L, y0);
-        g.lineTo(x1, y0);
-        g.lineTo(x1, y0 + L);
-        g.moveTo(x1, y1 - L);
-        g.lineTo(x1, y1);
-        g.lineTo(x1 - L, y1);
-        g.moveTo(x0 + L, y1);
-        g.lineTo(x0, y1);
-        g.lineTo(x0, y1 - L);
-        g.stroke();
-      }
+      if (sel) this.bracket(e, sx, sy, "rgba(255,255,255,0.95)");
       this.healthBar(sx, cy - bh / 2 - 4, e, inf ? 5 : 9);
       const grp = vs.groups.get(e.id);
       if (sel && grp !== undefined) {
@@ -749,22 +854,31 @@ export class Renderer {
           g.fillRect(sx - e.r.ammo * 2.5 + i * 5, cy + bh / 2 + 1, 4, 3);
         }
       }
-      if (sel && e.gx >= 0 && (e.order === "move" || e.order === "amove") && e.owner === me) {
-        const [tx, ty] = toScreen(e.gx, e.gy, 0);
-        g.strokeStyle = e.order === "amove" ? "rgba(255,120,80,0.35)" : "rgba(120,255,140,0.35)";
-        g.beginPath();
-        g.moveTo(sx, sy);
-        g.lineTo(tx, ty);
-        g.stroke();
+      if (sel && e.owner === me) {
+        // an unconfirmed order replaces the unit's current one straight away
+        const pend = vs.opt.unitOrders.get(e.id)?.cmd;
+        let line: [number, number, boolean] | null = null;
+        if (pend) {
+          if (pend.c === "move" || pend.c === "amove") line = [pend.x * 256 + 128, pend.y * 256 + 128, pend.c === "amove"];
+        } else if (e.gx >= 0 && (e.order === "move" || e.order === "amove")) line = [e.gx, e.gy, e.order === "amove"];
+        if (line) {
+          const [tx, ty] = toScreen(line[0], line[1], 0);
+          g.strokeStyle = line[2] ? "rgba(255,120,80,0.35)" : "rgba(120,255,140,0.35)";
+          g.beginPath();
+          g.moveTo(sx, sy);
+          g.lineTo(tx, ty);
+          g.stroke();
+        }
       }
     }
+    if (me >= 0) this.drawFeedback(vs, alpha);
     // superweapon target reticle
     if (vs.mode.kind === "sw" && vs.hoverCell) {
       const sw = SUPERWEAPONS[vs.mode.type!];
       const [hx, hy] = vs.hoverCell;
       const [sx, sy] = toScreen(hx * 256 + 128, hy * 256 + 128, 0);
       const r = (sw.radius / 256) * 42;
-      g.strokeStyle = `rgba(255,${80 + 80 * Math.sin(this.time * 8)},60,0.9)`;
+      g.strokeStyle = `rgba(255,${80 + 80 * Math.sin(this.uiTime * 8)},60,0.9)`;
       g.lineWidth = 1.5;
       g.beginPath();
       g.ellipse(sx, sy, r, r / 2, 0, 0, TAU);

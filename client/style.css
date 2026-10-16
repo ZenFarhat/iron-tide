@@ -72,6 +72,10 @@ canvas.view {
   color: var(--red);
   font-weight: 700;
 }
+.topbar .speed {
+  color: #8fd8ff;
+  font-weight: 700;
+}
 .sw-timers {
   position: absolute;
   top: 28px;

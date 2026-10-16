@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { World } from "../sim/world";
 import { LEP } from "../sim/fixed";
 import { SUPERWEAPONS } from "../sim/rules";
+import { killEntity } from "../sim/combat";
 import type { Command } from "../sim/commands";
 
 const C = (x: number) => x * LEP + LEP / 2;
@@ -154,6 +155,47 @@ describe("mechanics", () => {
     run(w, 600, [[0, { c: "attack", ids: [jet.id], t: target.id }]]);
     expect(target.hp).toBeLessThan(hp0);
     expect(jet.air).toBe("landed");
+  });
+
+  test("airfield parks four jets on separate pads and replaces lost ones", () => {
+    const w = sandbox();
+    const [hx, hy] = openSpot(w, 3, 3, [15, 15]);
+    w.addStructure("c_hub", 0, hx, hy, true);
+    w.addStructure("c_power", 0, ...openSpot(w, 2, 2, [hx + 4, hy]), true);
+    w.addStructure("c_power", 0, ...openSpot(w, 2, 2, [hx + 4, hy + 3]), true);
+    const ac = w.addStructure("c_aircmd", 0, ...openSpot(w, 3, 3, [hx, hy + 5]), true)!;
+    const jets = () => w.ents.filter((e) => !e.dead && e.type === "c_striker");
+    w.players[0].credits = 50000;
+    w.step([[0, { c: "build", type: "c_striker", n: 5 }]]);
+    for (let i = 0; i < 20000 && jets().length < 4; i++) w.step([]);
+    expect(jets().length).toBe(4);
+    expect(new Set(jets().map((j) => `${j.x},${j.y}`)).size).toBe(4);
+    // the fifth waits for a pad, then launches once one frees up
+    run(w, 3000);
+    expect(jets().length).toBe(4);
+    killEntity(w, jets()[0], null, "explode");
+    run(w, 5);
+    expect(jets().length).toBe(4);
+    expect(ac.pads.filter((id) => w.get(id)).length).toBe(4);
+  });
+
+  test("jets ordered to another airfield give up their old pad", () => {
+    const w = sandbox();
+    const [hx, hy] = openSpot(w, 3, 3, [15, 15]);
+    w.addStructure("c_hub", 0, hx, hy, true);
+    w.addStructure("c_power", 0, ...openSpot(w, 2, 2, [hx + 4, hy]), true);
+    w.addStructure("c_power", 0, ...openSpot(w, 2, 2, [hx + 4, hy + 3]), true);
+    const a = w.addStructure("c_aircmd", 0, ...openSpot(w, 3, 3, [hx, hy + 5]), true)!;
+    const b = w.addStructure("c_aircmd", 0, ...openSpot(w, 3, 3, [hx + 10, hy + 10]), true)!;
+    w.step([[0, { c: "build", type: "c_striker" }]]);
+    run(w, 1500);
+    const jet = w.ents.find((e) => e.type === "c_striker")!;
+    expect(a.pads).toContain(jet.id);
+    run(w, 600, [[0, { c: "enter", ids: [jet.id], t: b.id }]]);
+    expect(jet.air).toBe("landed");
+    expect(jet.home).toBe(b.id);
+    expect(b.pads).toContain(jet.id);
+    expect(a.pads).not.toContain(jet.id);
   });
 
   test("veterancy is earned from kills", () => {

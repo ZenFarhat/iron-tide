@@ -17,8 +17,8 @@ bun install
 bun run dev        # http://localhost:3000  (serves the client and the multiplayer server)
 ```
 
-- **Skirmish:** Main menu → *Skirmish vs AI*. Add up to three AI opponents (easy, normal or hard), with teams, map size, credits and superweapons configurable.
-- **Multiplayer:** Main menu → *Multiplayer* → *Create battle*. Share the 5-letter room code; others join by code or from the list, mark themselves ready, and the host starts. Open two browser tabs to try it locally. Late joiners spectate, and the server replays the turn history so they catch up.
+- **Skirmish:** Main menu → *Skirmish vs AI*. Add up to three AI opponents (easy, normal or hard), with teams, map size, credits, game speed and superweapons configurable.
+- **Multiplayer:** Main menu → *Multiplayer* → *Create battle*. Share the 5-letter room code; others join by code or from the list, mark themselves ready, and the host starts. The host can set the game speed to 1×, 2×, 3×, 4× or 8×. Open two browser tabs to try it locally. Late joiners spectate, and the server replays the turn history so they catch up.
 - **Production:** `bun run start` (set `PORT` / `HOST`). `bun run build` also produces a static bundle in `dist/`, but online play needs the server.
 
 ## Docker / deploy
@@ -72,8 +72,9 @@ scripts/    headless AI matches, balance duels, Playwright screenshot / UI / mul
 
 ### Netcode: server-clocked deterministic lockstep
 
-- Each client runs an identical simulation at 20 ticks/s. Only player **commands** cross the network.
-- The server emits a *turn* every 100 ms containing every command it received; each turn covers 2 ticks. Clients execute turn *n* at tick 2n, so all simulations see the same inputs on the same tick.
+- Each client runs an identical simulation at 20 ticks/s × game speed. Only player **commands** cross the network.
+- The server emits a *turn* every 50 ms containing every command it received. At normal speed each turn covers 1 tick, and at *k*× speed it covers *k* ticks. Clients execute turn *n* at tick *n·k*, so all simulations see the same inputs on the same tick. The server's turn clock never changes with game speed, so faster games simulate more ticks per turn and everything speeds up, including production, charge timers and the match clock.
+- **Optimistic feedback:** a command only takes effect when its turn comes back (one round trip plus up to one turn). Until then the client previews it: click markers, flashing targets, order lines, placement ghosts, and sidebar queue/hold/cancel state. Each command carries a sequence number that the server echoes in the turn, and the preview is retired on the tick that turn is simulated.
 - Simulation state is integer-only (positions in 1/256-cell "leptons"), with a seeded PRNG and no `Math.sin`/`atan2`/`random`, so results are bit-identical across browsers.
 - Every 100 ticks, each client sends a state hash. The server compares them and broadcasts a desync warning if they differ.
 - The server sanitizes every command, and the simulation checks ownership, so clients can't command other players' units.
@@ -118,13 +119,13 @@ Modern controls (right-click to command) can be switched on in the in-game menu.
 ## Development
 
 ```bash
-bun test                              # determinism + mechanics (21 tests)
+bun test                              # determinism + mechanics (23 tests)
 bun run typecheck
 bun scripts/headless.ts 1 20 CD       # AI vs AI match (seed, minutes, factions)
 bun scripts/duel.ts c_warden d_bastion 6000   # equal-cost balance duel
 bun scripts/shot.ts out/              # headless Chrome screenshots (server must be running)
 bun scripts/ui-test.ts out/           # real mouse/keyboard flow
-bun scripts/mp-test.ts out/ 40        # two browsers, online lockstep, desync check
+bun scripts/mp-test.ts out/ 40 4      # two browsers, online lockstep at 4× speed, latency + desync check
 bun scripts/fx-shot.ts out/           # staged battle + superweapon effects
 ```
 

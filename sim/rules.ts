@@ -111,6 +111,13 @@ export type Kind = "inf" | "veh" | "air" | "bld";
 export type Queue = "bld" | "def" | "inf" | "veh" | "air";
 export const QUEUES: Queue[] = ["bld", "def", "inf", "veh", "air"];
 export const QUEUE_PRODUCER: Record<Queue, string> = { bld: "hub", def: "hub", inf: "barracks", veh: "factory", air: "aircmd" };
+/** landing-pad centres (cells, from the footprint corner) for slots 0–3; the airfield model draws its pads here */
+export const PAD_SPOTS: [number, number][] = [
+  [1.2, 1.2],
+  [2.35, 1.2],
+  [1.2, 2.35],
+  [2.35, 2.35],
+];
 
 export interface Rule {
   id: string;

@@ -138,7 +138,7 @@ export class Input {
       const r = RULES[mode.type!];
       const bx = cx - Math.floor((r.w - 1) / 2),
         by = cy - Math.floor((r.h - 1) / 2);
-      const ok = !!p && w.placementOk(p, r.id, bx, by);
+      const ok = !!p && w.placementOk(p, r.id, bx, by) && !g.opt.placingAt(bx, by, r.w, r.h);
       return {
         cursor: "place",
         exec: () => {

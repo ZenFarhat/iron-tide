@@ -14,6 +14,7 @@ import {
   MULTI_FACTORY_SPEED,
   ORE_GROW_PERIOD,
   ORE_MAX,
+  PAD_SPOTS,
   QUEUES,
   QUEUE_PRODUCER,
   RULES,
@@ -650,11 +651,11 @@ export class World {
     const tag = QUEUE_PRODUCER[q];
     const prim = this.get(p.primary[q]);
     if (prim && prim.owner === p.idx && prim.built >= CONSTRUCT_TICKS && prim.selling === 0 && prim.r.tags.includes(tag)) {
-      if (q !== "air" || prim.pads.length < (prim.r.pads ?? 0)) return prim;
+      if (q !== "air" || this.freePad(prim) >= 0) return prim;
     }
     for (const e of this.ents) {
       if (e.dead || e.owner !== p.idx || e.kind !== "bld" || e.built < CONSTRUCT_TICKS || e.selling || !e.r.tags.includes(tag)) continue;
-      if (q === "air" && e.pads.length >= (e.r.pads ?? 0)) continue;
+      if (q === "air" && this.freePad(e) < 0) continue;
       return e;
     }
     return null;
@@ -742,8 +743,7 @@ export class World {
     return -1;
   }
   padPos(b: Entity, slot: number): [number, number] {
-    const ox = slot & 1 ? 2.25 : 0.75,
-      oy = slot & 2 ? 2.25 : 0.75;
+    const [ox, oy] = PAD_SPOTS[slot & 3];
     return [Math.round((b.bx + ox) * LEP), Math.round((b.by + oy) * LEP)];
   }
 
@@ -1043,7 +1043,7 @@ export class World {
   }
 
   // ───────────────────────────── main loop ─────────────────────────────
-  step(cmds: [number, Command][]) {
+  step(cmds: readonly (readonly [number, Command, ...unknown[]])[]) {
     this.tick++;
     for (const e of this.ents) {
       e.px = e.x;

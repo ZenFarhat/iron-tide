@@ -1133,6 +1133,23 @@ function flyToward(e: Entity, tx: number, ty: number, sp: number): boolean {
   return false;
 }
 
+/** reserve a landing pad: the ordered airfield if it has room, else a pad this jet already
+ *  holds, else any free one. Reservations elsewhere are released so they don't block a pad. */
+function claimPad(w: World, e: Entity, want: Entity | undefined): Entity | undefined {
+  const usable = (b: Entity) => !b.dead && b.owner === e.owner && !!b.r.pads && b.built >= CONSTRUCT_TICKS;
+  let home = want && usable(want) && w.freePad(want) >= 0 ? want : undefined;
+  if (!home) home = w.ents.find((b) => usable(b) && b.pads.indexOf(e.id) >= 0);
+  if (!home) home = w.ents.find((b) => usable(b) && w.freePad(b) >= 0);
+  e.home = home ? home.id : 0;
+  for (const b of w.ents) {
+    if (b === home || !b.r.pads) continue;
+    const k = b.pads.indexOf(e.id);
+    if (k >= 0) b.pads[k] = 0;
+  }
+  if (home && home.pads.indexOf(e.id) < 0) home.pads[w.freePad(home)] = e.id;
+  return home;
+}
+
 function updateAir(w: World, e: Entity) {
   const m = w.map;
   const sp = speedOf(e);
@@ -1195,28 +1212,12 @@ function updateAir(w: World, e: Entity) {
   if (e.air === "returning") {
     let home = w.get(e.home);
     if (!home || home.owner !== e.owner || home.pads.indexOf(e.id) < 0) {
-      // find a pad
-      e.home = 0;
-      home = undefined;
-      for (const b of w.ents) {
-        if (b.dead || b.owner !== e.owner || !b.r.pads || b.built < CONSTRUCT_TICKS) continue;
-        if (b.pads.indexOf(e.id) >= 0) {
-          home = b;
-          break;
-        }
-        const slot = w.freePad(b);
-        if (slot >= 0) {
-          b.pads[slot] = e.id;
-          home = b;
-          break;
-        }
-      }
+      home = claimPad(w, e, home);
       if (!home) {
         e.air = "flying";
         e.order = "idle";
         return;
       }
-      e.home = home.id;
     }
     const [px, py] = w.padPos(home, home.pads.indexOf(e.id));
     if (flyToward(e, px, py, sp)) {

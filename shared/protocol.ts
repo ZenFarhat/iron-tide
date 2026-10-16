@@ -1,10 +1,19 @@
 // Wire protocol between browser clients and the Bun server (JSON over WebSocket).
 import type { Command } from "../sim/commands";
 import type { Faction } from "../sim/rules";
+import { TPS } from "../sim/fixed";
 
-export const PROTOCOL_VERSION = 1;
-export const TURN_MS = 100;
+export const PROTOCOL_VERSION = 2;
+/** real time between network turns; shorter turns mean less input delay */
+export const TURN_MS = 50;
 export const MAX_SLOTS = 4;
+export const GAME_SPEEDS = [1, 2, 3, 4, 8];
+
+/** Simulation ticks covered by one turn. The server's turn clock never changes; faster games
+ *  just simulate more ticks per turn, so everything in the sim (timers included) speeds up. */
+export function turnTicks(speed: number) {
+  return Math.max(1, Math.round((TURN_MS * TPS * speed) / 1000));
+}
 
 export type AIDifficulty = "easy" | "normal" | "hard";
 export type SlotFaction = Faction | "R";
@@ -26,9 +35,10 @@ export interface LobbySettings {
   startUnits: number;
   superweapons: boolean;
   shortGame: boolean;
+  speed: number;
 }
 
-export const DEFAULT_LOBBY: LobbySettings = { mapSize: 72, credits: 10000, startUnits: 3, superweapons: true, shortGame: true };
+export const DEFAULT_LOBBY: LobbySettings = { mapSize: 72, credits: 10000, startUnits: 3, superweapons: true, shortGame: true, speed: 1 };
 
 export interface RoomSummary {
   id: string;
@@ -57,7 +67,8 @@ export interface StartPlayer {
   clientId?: string;
 }
 
-export type Turn = [number, Command][];
+/** [player, command, sender's sequence number]; the number lets the sender retire its optimistic preview */
+export type Turn = [number, Command, number?][];
 
 export type ClientMsg =
   | { t: "hello"; name: string; v: number }
@@ -71,7 +82,7 @@ export type ClientMsg =
   | { t: "settings"; settings: Partial<LobbySettings> }
   | { t: "start" }
   | { t: "loaded" }
-  | { t: "cmd"; cmd: Command }
+  | { t: "cmd"; cmd: Command; seq?: number }
   | { t: "hash"; tick: number; h: number }
   | { t: "chat"; text: string }
   | { t: "ping"; ts: number };

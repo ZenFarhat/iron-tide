@@ -8,7 +8,8 @@ export interface Session {
   /** highest turn number available (inclusive), or Infinity for local sessions */
   available(): number;
   turn(n: number): Turn;
-  send(cmd: Command): void;
+  /** seq comes back with the command in the turn that executes it */
+  send(cmd: Command, seq?: number): void;
   hash(tick: number, h: number): void;
   chat(text: string): void;
   close(): void;
@@ -27,8 +28,8 @@ export class LocalSession implements Session {
     this.pending = [];
     return t;
   }
-  send(cmd: Command) {
-    this.pending.push([this.me, cmd]);
+  send(cmd: Command, seq?: number) {
+    this.pending.push([this.me, cmd, seq]);
   }
   hash() {}
   chat() {}
@@ -122,9 +123,9 @@ export class NetSession implements Session {
   turn(n: number): Turn {
     return this.turns[n] ?? [];
   }
-  send(cmd: Command) {
+  send(cmd: Command, seq?: number) {
     if (this.me < 0) return;
-    this.net.sendRaw({ t: "cmd", cmd });
+    this.net.sendRaw({ t: "cmd", cmd, seq });
   }
   hash(tick: number, h: number) {
     if (this.me >= 0) this.net.sendRaw({ t: "hash", tick, h });

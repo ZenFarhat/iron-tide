@@ -2,6 +2,7 @@
 // Units: origin at centre, forward = +x, z up (units = cells).
 // Structures: footprint spans [0,w]×[0,h] with origin at the footprint's top corner.
 import { Model, type Col } from "./model3d";
+import { PAD_SPOTS } from "../../sim/rules";
 
 // palette
 const CW = "#d6dbe1",
@@ -480,24 +481,31 @@ const structBuilders: Record<string, () => StructModel> = {
   c_aircmd() {
     const m = new Model();
     slab(m, 3, 3, "#7d8791", "#8a949e", 0.04);
-    for (const [x, y] of [
-      [0.75, 0.75],
-      [2.25, 0.75],
-      [0.75, 2.25],
-      [2.25, 2.25],
-    ]) {
-      m.box(x, y, 0.04, 1.2, 1.2, 0.02, "#5b646d");
-      m.box(x, y, 0.06, 0.6, 0.06, 0.004, HAZ);
-      m.box(x, y, 0.06, 0.06, 0.6, 0.004, HAZ);
-      light(m, x + 0.5, y + 0.5, 0.06);
+    // pads sit where the sim parks jets; everything tall stays behind them so landed jets are never hidden
+    for (const [x, y] of PAD_SPOTS) {
+      m.box(x, y, 0.04, 1.04, 1.04, 0.02, "#5b646d");
+      m.box(x, y, 0.06, 0.52, 0.06, 0.004, HAZ);
+      m.box(x, y, 0.06, 0.06, 0.52, 0.004, HAZ);
+      light(m, x + 0.44, y + 0.44, 0.06);
     }
-    m.cyl(1.5, 1.5, 0.04, 0.16, 0.72, CW, 8);
-    m.cyl(1.5, 1.5, 0.76, 0.26, 0.14, GLASS, 10, 0.3);
-    m.cyl(1.5, 1.5, 0.9, 0.3, 0.03, "team", 10);
+    // control tower in the back corner
+    m.cyl(0.4, 0.4, 0.04, 0.16, 0.72, CW, 8);
+    m.cyl(0.4, 0.4, 0.76, 0.26, 0.14, GLASS, 10, 0.3);
+    m.cyl(0.4, 0.4, 0.9, 0.3, 0.03, "team", 10);
+    // ops hut and fuel tanks along the back edges
+    m.box(0.36, 1.78, 0.04, 0.42, 0.95, 0.3, CW, CS);
+    m.box(0.36, 1.78, 0.34, 0.46, 0.99, 0.03, "team");
+    m.box(1.9, 0.36, 0.1, 0.9, 0.05, 0.05, CD);
+    for (const x of [1.5, 2.3]) {
+      m.cyl(x, 0.36, 0.04, 0.18, 0.3, CS, 12, 0.18, CW);
+      m.cyl(x, 0.36, 0.2, 0.185, 0.04, "team", 12);
+    }
+    light(m, 0.12, 2.88, 0.06);
+    light(m, 2.88, 0.12, 0.06);
     const t = new Model();
     t.box(0, 0, 0, 0.04, 0.04, 0.12, CD);
     t.tube(0.0, 0, 0.12, 1, 0, 0.4, 0.04, 0.16, CW, 10, 0.2);
-    return { body: m, turret: t, pivot: [1.5, 1.5, 0.93], height: 1.2 };
+    return { body: m, turret: t, pivot: [0.4, 0.4, 0.93], height: 1.2 };
   },
   c_depot() {
     const m = new Model();

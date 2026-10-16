@@ -3,6 +3,7 @@ import type { ServerWebSocket } from "bun";
 import { sanitizeCommand } from "../sim/commands";
 import {
   DEFAULT_LOBBY,
+  GAME_SPEEDS,
   MAX_SLOTS,
   PLAYER_COLORS,
   TURN_MS,
@@ -205,6 +206,7 @@ export class Room {
         if (typeof st.startUnits === "number" && st.startUnits >= 0 && st.startUnits <= 10) this.settings.startUnits = Math.round(st.startUnits);
         if (typeof st.superweapons === "boolean") this.settings.superweapons = st.superweapons;
         if (typeof st.shortGame === "boolean") this.settings.shortGame = st.shortGame;
+        if (typeof st.speed === "number" && GAME_SPEEDS.includes(st.speed)) this.settings.speed = st.speed;
         for (const s of this.slots) if (s.kind === "human" && s.clientId !== this.hostId) s.ready = false;
         this.pushState();
         break;
@@ -225,7 +227,8 @@ export class Room {
         const cmd = sanitizeCommand(msg.cmd);
         if (!cmd) return;
         this.cmdCount.set(pi, n + 1);
-        this.pending.push([pi, cmd]);
+        const seq = msg.seq;
+        this.pending.push(typeof seq === "number" && Number.isSafeInteger(seq) ? [pi, cmd, seq] : [pi, cmd]);
         break;
       }
       case "hash":

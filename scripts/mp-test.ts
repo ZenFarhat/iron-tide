@@ -1,9 +1,10 @@
 // Two-browser multiplayer smoke test: room create/join, lockstep start, commands, desync check.
-// Usage: bun scripts/mp-test.ts [outDir] [seconds]
+// Usage: bun scripts/mp-test.ts [outDir] [seconds] [speed]
 import { chromium, type Page } from "playwright-core";
 
 const out = process.argv[2] ?? "screenshots";
 const secs = Number(process.argv[3] ?? 25);
+const speed = Number(process.argv[4] ?? 1);
 const url = process.env.URL ?? "http://localhost:3000/";
 const browser = await chromium.launch({ executablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true });
 
@@ -41,6 +42,12 @@ await A.page.evaluate(() => {
   sel.value = "C";
   sel.dispatchEvent(new Event("change"));
 });
+if (speed !== 1)
+  await A.page.evaluate((v) => {
+    const sel = document.querySelector<HTMLSelectElement>('select[data-s="speed"]')!;
+    sel.value = String(v);
+    sel.dispatchEvent(new Event("change"));
+  }, speed);
 await B.page.waitForTimeout(300);
 await B.page.click("#rm-ready");
 await A.page.waitForTimeout(400);
@@ -57,6 +64,24 @@ const deploy = (p: Page) =>
     return g.me;
   });
 console.log("me", await deploy(A.page), await deploy(B.page));
+console.log("speed", await A.page.evaluate(() => (window as any).__ironTide.game.speed), await B.page.evaluate(() => (window as any).__ironTide.game.speed));
+// round trip from issuing a command to the sim executing it (what optimistic feedback covers)
+const latency = (p: Page) =>
+  p.evaluate(async () => {
+    const g = (window as any).__ironTide.game;
+    const out: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      const t0 = performance.now();
+      g.send({ c: "stop", ids: [] });
+      const seq = g.opt.pending[g.opt.pending.length - 1].seq;
+      while (g.opt.pending.some((x: any) => x.seq === seq)) await new Promise((r) => requestAnimationFrame(r));
+      out.push(performance.now() - t0);
+      await new Promise((r) => setTimeout(r, 37));
+    }
+    out.sort((a, b) => a - b);
+    return { avg: Math.round(out.reduce((a, b) => a + b) / out.length), max: Math.round(out[out.length - 1]) };
+  });
+console.log("command latency ms", JSON.stringify(await latency(A.page)), JSON.stringify(await latency(B.page)));
 await A.page.waitForTimeout(3000);
 // queue a power plant on both sides and move some infantry
 for (const p of [A.page, B.page])
@@ -99,6 +124,7 @@ const drive = (p: Page) =>
   });
 
 const t0 = Date.now();
+const tick0 = await A.page.evaluate(() => (window as any).__ironTide.game.world.tick);
 while (Date.now() - t0 < secs * 1000) {
   for (let k = 0; k < 5; k++) {
     await drive(A.page);
@@ -115,6 +141,8 @@ while (Date.now() - t0 < secs * 1000) {
   });
   console.log("A", JSON.stringify(sa), "B", JSON.stringify(sb));
 }
+const tick1 = await A.page.evaluate(() => (window as any).__ironTide.game.world.tick);
+console.log(`sim rate ${((tick1 - tick0) / ((Date.now() - t0) / 1000)).toFixed(1)} ticks/s (expected ~${20 * speed})`);
 const ha = await A.page.evaluate(() => (window as any).__ironTide.game.desynced);
 const hb = await B.page.evaluate(() => (window as any).__ironTide.game.desynced);
 console.log(ha || hb ? "DESYNC DETECTED" : "lockstep in sync (server hash checks passed)");

@@ -2,9 +2,10 @@
 import { World } from "../sim/world";
 import type { Command } from "../sim/commands";
 import type { SimEvent } from "../sim/entity";
-import { TURN_TICKS, TPS } from "../sim/fixed";
+import { TPS } from "../sim/fixed";
 import { RULES, SUPERWEAPONS } from "../sim/rules";
-import { PLAYER_COLORS } from "../shared/protocol";
+import { PLAYER_COLORS, turnTicks } from "../shared/protocol";
+import { Optimistic } from "./optimistic";
 import { Renderer, type Mode, type ViewState } from "./render/renderer";
 import { Fx } from "./render/fx";
 import { Audio, FX_SOUND } from "./audio";
@@ -19,7 +20,12 @@ export interface GameOptions {
   audio: Audio;
   onExit: () => void;
   title?: string;
+  /** game speed multiplier; fixed for the whole match when online */
+  speed?: number;
 }
+
+/** speeds offered in the single-player menu (online games use the lobby's GAME_SPEEDS) */
+const LOCAL_SPEEDS = [0.5, 1, 1.5, 2, 3, 4, 8];
 
 export class Game {
   world: World;
@@ -36,6 +42,9 @@ export class Game {
   vs: ViewState;
   controls: "classic" | "modern" = "classic";
   speed = 1;
+  /** sim ticks per lockstep turn */
+  turnTicks = 1;
+  opt = new Optimistic();
   paused = false;
   running = true;
   private acc = 0;
@@ -61,6 +70,9 @@ export class Game {
     this.me = o.session.me;
     this.audio = o.audio;
     this.onExit = o.onExit;
+    this.speed = o.speed ?? 1;
+    // local sessions apply commands on the very next tick; online turns cover several ticks
+    this.turnTicks = this.session.online ? turnTicks(this.speed) : 1;
     (this.world as any).__me = this.me;
     try {
       const c = localStorage.getItem("it.controls");
@@ -89,6 +101,7 @@ export class Game {
       cursor: "default",
       groups: new Map(),
       showAllHealth: false,
+      opt: this.opt,
     };
     this.sidebar = new Sidebar(this, root);
     this.minimap = new Minimap(this, this.sidebar.minimapHost);
@@ -155,7 +168,7 @@ export class Game {
 
   send(cmd: Command) {
     if (this.me < 0 || this.ended) return;
-    this.session.send(cmd);
+    this.session.send(cmd, this.opt.issue(cmd, this.world, performance.now()));
   }
 
   setMode(m: Mode) {
@@ -220,7 +233,7 @@ export class Game {
       <label class="row">Sound effects <input type="range" min="0" max="1" step="0.05" data-k="sfx"></label>
       <label class="row">Music <input type="range" min="0" max="1" step="0.05" data-k="music"></label>
       <label class="row">Announcer voice <input type="checkbox" data-k="voice"></label>
-      ${this.session.online ? "" : `<label class="row">Game speed <select data-k="speed"><option value="0.5">Slow</option><option value="1">Normal</option><option value="1.5">Fast</option><option value="2">Faster</option></select></label>`}
+      ${this.session.online ? `<div class="row">Game speed <b>${this.speed}×</b></div>` : `<label class="row">Game speed <select data-k="speed">${LOCAL_SPEEDS.map((v) => `<option value="${v}">${v}×${v === 1 ? " (normal)" : ""}</option>`).join("")}</select></label>`}
       <div class="btns"><button data-a="resume" class="primary">Resume</button><button data-a="surrender" class="danger">${this.me >= 0 && !this.world.players[this.me].defeated && !this.ended ? "Surrender" : "Leave match"}</button></div>
       <div class="help">
         <b>Controls</b> · Drag to select · Left-click to order (classic) · Right-click / Esc deselects · Right-drag scrolls<br/>
@@ -302,32 +315,39 @@ export class Game {
     this.fps = this.fps * 0.95 + (1000 / Math.max(1, dtMs)) * 0.05;
     const stepMs = 1000 / TPS;
     const avail = this.session.available();
-    const maxTick = avail === Infinity ? Infinity : (avail + 1) * TURN_TICKS;
+    const maxTick = avail === Infinity ? Infinity : (avail + 1) * this.turnTicks;
+    // buffering thresholds are real-time durations, so they hold at every game speed
+    const ticksIn = (ms: number) => Math.ceil((ms * TPS * this.speed) / 1000);
+    const maxSteps = Math.max(6, ticksIn(300));
     if (!this.paused) this.acc += dtMs * this.speed;
     let steps = 0;
-    if (maxTick !== Infinity && this.world.tick + TURN_TICKS * 6 < maxTick) {
+    if (maxTick !== Infinity && this.world.tick + ticksIn(600) < maxTick) {
       // far behind (joined mid-game or tab was hidden): fast-forward without effects
       this.ff = true;
       const t0 = performance.now();
-      while (this.world.tick < maxTick - TURN_TICKS * 2 && performance.now() - t0 < 30) this.stepSim();
+      while (this.world.tick < maxTick - ticksIn(200) && performance.now() - t0 < 30) this.stepSim();
       this.ff = false;
       this.acc = 0;
     }
-    while (this.acc >= stepMs && this.world.tick < maxTick && steps < 6) {
+    while (this.acc >= stepMs && this.world.tick < maxTick && steps < maxSteps) {
       this.stepSim();
       this.acc -= stepMs;
       steps++;
     }
     // slightly speed up when we have a backlog to keep latency low
-    if (maxTick !== Infinity && this.world.tick + TURN_TICKS * 3 < maxTick && !this.paused) {
-      this.stepSim();
+    if (maxTick !== Infinity && this.world.tick + ticksIn(300) < maxTick && !this.paused) {
+      for (let k = 0; k < Math.ceil(this.speed) && this.world.tick < maxTick; k++) this.stepSim();
     }
     if (this.world.tick >= maxTick) this.acc = Math.min(this.acc, stepMs);
-    if (this.acc > stepMs * 4) this.acc = stepMs * 4;
+    if (this.acc > stepMs * maxSteps) this.acc = stepMs * maxSteps;
     const alpha = Math.max(0, Math.min(1, this.acc / stepMs));
+    // world animation (effects, walk cycles, spinning radars) runs on game time
+    const simDt = this.paused ? 0 : dt * this.speed;
+    this.fx.speed = this.speed;
+    this.opt.update(dt, now);
     this.input.update(dt);
-    this.fx.update(dt);
-    this.renderer.draw(alpha, this.vs, dt);
+    this.fx.update(simDt);
+    this.renderer.draw(alpha, this.vs, dt, simDt);
     this.minimap.draw(dt);
     this.sidebar.update(dt);
     this.refreshT += dt;
@@ -341,8 +361,10 @@ export class Game {
   private stepSim() {
     const w = this.world;
     const T = w.tick;
-    const cmds = T % TURN_TICKS === 0 ? this.session.turn(T / TURN_TICKS) : [];
+    const cmds = T % this.turnTicks === 0 ? this.session.turn(T / this.turnTicks) : [];
     w.step(cmds);
+    // our own commands in this turn have now taken effect: retire their previews
+    for (const [pi, , seq] of cmds) if (pi === this.me && seq !== undefined) this.opt.confirm(seq);
     for (const ev of w.events) this.onEvent(ev);
     w.events.length = 0;
     if (w.tick % 100 === 0) this.session.hash(w.tick, w.hash());
@@ -496,7 +518,7 @@ export class Game {
     const w = this.world;
     const secs = Math.floor(w.tick / TPS);
     const ping = (this.session as any).net?.ping;
-    this.topEl.innerHTML = `<span>⏱ ${fmtTime(secs)}</span>${this.session.online ? `<span>📶 ${ping ?? "-"} ms</span>` : ""}<span>${Math.round(this.fps)} fps</span>${this.paused ? "<span class='paused'>PAUSED</span>" : ""}${this.desynced ? "<span class='desync'>DESYNC</span>" : ""}`;
+    this.topEl.innerHTML = `<span>⏱ ${fmtTime(secs)}</span>${this.speed !== 1 ? `<span class="speed">${this.speed}× speed</span>` : ""}${this.session.online ? `<span>📶 ${ping ?? "-"} ms</span>` : ""}<span>${Math.round(this.fps)} fps</span>${this.paused ? "<span class='paused'>PAUSED</span>" : ""}${this.desynced ? "<span class='desync'>DESYNC</span>" : ""}`;
     // superweapon timers for every player (visible to all, as is tradition)
     const rows: string[] = [];
     for (const e of w.ents) {
