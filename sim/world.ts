@@ -3,7 +3,8 @@
 
 import { Entity, Player, Proj, type PlayerInit, type QueueItem, type SimEvent } from "./entity";
 import { Hasher, LEP, HALF, Rng, dist2, isqrt } from "./fixed";
-import { GameMap, generateMap } from "./map";
+import { GameMap, generateMap, T_WATER, type Theme } from "./map";
+import { buildPremade, mapDef } from "./maps";
 import { PathFinder } from "./path";
 import {
   ADJACENT,
@@ -23,14 +24,17 @@ import {
   SUPERWEAPONS,
   SURVIVORS,
   buildTicks,
+  locoOf,
   rule,
+  type Loco,
   type Queue,
   type Rule,
 } from "./rules";
 import { sanitizeCommand, type Command } from "./commands";
-import { updateUnit, setMoveGoal, groupMove, stopUnit, scatterUnit, nearestFreeCell, deployUnit } from "./units";
+import { updateUnit, setMoveGoal, groupMove, stopUnit, scatterUnit, nearestFreeCell, freeSpotNear, deployUnit } from "./units";
 import { updateProjectiles, updateStructureCombat, killEntity, explode, updateSuperweaponEffects, fireSuperweapon } from "./combat";
 import { aiThink, aiInit } from "./ai";
+import { updateWildlife } from "./wildlife";
 
 export interface GameSettings {
   seed: number;
@@ -39,6 +43,11 @@ export interface GameSettings {
   startUnits: number;
   superweapons: boolean;
   shortGame: boolean;
+  /** "random" for a generated map, otherwise a hand-made map id */
+  map?: string;
+  /** biome of generated maps (hand-made maps bring their own) */
+  theme?: Theme;
+  wildlife?: boolean;
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
@@ -48,6 +57,9 @@ export const DEFAULT_SETTINGS: GameSettings = {
   startUnits: 3,
   superweapons: true,
   shortGame: true,
+  map: "random",
+  theme: "temperate",
+  wildlife: true,
 };
 
 export interface Storm {
@@ -62,6 +74,19 @@ export interface Rad {
   y: number;
   r: number;
   until: number;
+}
+export interface Barrage {
+  owner: number;
+  src: number;
+  x: number;
+  y: number;
+  start: number;
+  end: number;
+}
+/** a wildlife herd's home range; its members wander around it and it drifts over time */
+export interface Herd {
+  x: number;
+  y: number;
 }
 
 const RULE_INDEX: Record<string, number> = {};
@@ -94,6 +119,8 @@ export class World {
   stampGen = 0;
   storms: Storm[] = [];
   rads: Rad[] = [];
+  barrages: Barrage[] = [];
+  herds: Herd[] = [];
   winner = -2; // -2 ongoing, -1 draw, else winning team key (player idx of a survivor)
   winners: number[] = [];
   structVersion = 0;
@@ -101,7 +128,10 @@ export class World {
   constructor(settings: GameSettings, players: PlayerInit[]) {
     this.settings = { ...DEFAULT_SETTINGS, ...settings };
     this.rng = new Rng(this.settings.seed);
-    this.map = generateMap({ seed: this.settings.seed, size: this.settings.mapSize, players: Math.max(2, players.length) });
+    const def = this.settings.map && this.settings.map !== "random" ? mapDef(this.settings.map) : undefined;
+    this.map = def
+      ? buildPremade(def, this.settings.seed, Math.max(2, players.length))
+      : generateMap({ seed: this.settings.seed, size: this.settings.mapSize, players: Math.max(2, players.length), theme: this.settings.theme });
     const n = this.map.w * this.map.h;
     this.bldAt = new Int32Array(n);
     this.solid = new Uint8Array(n);
@@ -147,6 +177,24 @@ export class World {
       this.revealCircle(p, s.x, s.y, 10);
       if (p.ai) aiInit(this, p);
     });
+    if (this.settings.wildlife) this.spawnWildlife();
+  }
+
+  private spawnWildlife() {
+    for (const h of this.map.herds) {
+      const herd = this.herds.length;
+      this.herds.push({ x: h.x, y: h.y });
+      for (let k = 0; k < h.n; k++) {
+        const cell = nearestFreeCell(this, h.x + (k % 3) - 1, h.y + Math.floor(k / 3) - 1, true);
+        if (cell < 0) continue;
+        const [x, y] = this.cellCenter(cell);
+        const a = this.spawnUnit(h.type, -1, x + ((k * 41) % 90) - 45, y + ((k * 67) % 90) - 45, this.rng.int(256));
+        if (!a) continue;
+        a.herd = herd;
+        a.goalX = a.x;
+        a.goalY = a.y;
+      }
+    }
   }
 
   // ───────────────────────────── helpers ─────────────────────────────
@@ -183,6 +231,17 @@ export class World {
   }
   groundPassable(i: number) {
     return this.map.groundOk(i) && !this.solid[i];
+  }
+  passableFor(loco: Loco, i: number) {
+    return this.map.passable(loco, i) && !this.solid[i];
+  }
+  /** can this unit stand in cell i (ignoring other units)? */
+  canEnter(e: Entity, i: number) {
+    return this.map.passable(locoOf(e.r), i) && !this.solid[i];
+  }
+  /** terrain test for one footprint cell of a structure: shipyards float, everything else needs dry, ore-free ground */
+  siteOk(r: Rule, i: number) {
+    return r.naval ? this.map.terrain[i] === T_WATER : this.map.buildableTerrain(i);
   }
 
   newId() {
@@ -661,12 +720,33 @@ export class World {
     return null;
   }
 
-  exitCell(b: Entity): number {
+  exitCell(b: Entity, loco: Loco = "foot"): number {
     const W = this.map.w;
     const ex = b.bx + Math.floor(b.r.w / 2),
       ey = b.by + b.r.h;
-    if (this.map.inside(ex, ey) && this.groundPassable(ey * W + ex)) return ey * W + ex;
-    return nearestFreeCell(this, ex, ey, false);
+    if (this.map.inside(ex, ey) && this.passableFor(loco, ey * W + ex)) return ey * W + ex;
+    return nearestFreeCell(this, ex, ey, loco === "foot", undefined, loco);
+  }
+
+  /** a free cell around a shipyard's footprint for a new ship to sail out to, -1 if hemmed in */
+  private launchCell(b: Entity): number {
+    const W = this.map.w;
+    let best = -1,
+      bd = 1e9;
+    for (let y = b.by - 1; y <= b.by + b.r.h; y++)
+      for (let x = b.bx - 1; x <= b.bx + b.r.w; x++) {
+        if (x >= b.bx && x < b.bx + b.r.w && y >= b.by && y < b.by + b.r.h) continue;
+        if (!this.map.inside(x, y)) continue;
+        const i = y * W + x;
+        if (!this.passableFor("naval", i) || this.vehAt[i]) continue;
+        // prefer the front (bottom edge), like a factory door
+        const d = Math.abs(x - (b.bx + 1)) + Math.abs(y - (b.by + b.r.h)) * 2;
+        if (d < bd) {
+          bd = d;
+          best = i;
+        }
+      }
+    return best;
   }
 
   private deliverUnit(p: Player, type: string, q: Queue): boolean {
@@ -689,7 +769,20 @@ export class World {
     if (exit < 0) return false;
     const W = this.map.w;
     let e: Entity;
-    if (r.kind === "inf") {
+    if (locoOf(r) === "naval") {
+      // ships slip out of the yard onto open water
+      const out = this.launchCell(b);
+      if (out < 0) return false;
+      const [x, y] = this.cellCenter(this.cellOf(b.x, b.y));
+      e = this.spawnUnit(type, p.idx, x, y, 96)!;
+      this.vehAt[e.cell] = 0;
+      e.exiting = true;
+      e.path = [out];
+      e.pathI = 0;
+      e.goalCell = out;
+      [e.goalX, e.goalY] = this.cellCenter(out);
+      this.vehAt[out] = e.id;
+    } else if (r.kind === "inf") {
       const [x, y] = this.cellCenter(exit);
       e = this.spawnUnit(type, p.idx, x, y, 96)!;
     } else if (r.kind === "air") {
@@ -723,10 +816,20 @@ export class World {
       this.vehAt[out] = e.id;
     }
     p.stats.built++;
-    if (b.rallyX >= 0 && !r.harvester) {
-      e.gx = b.rallyX;
-      e.gy = b.rallyY;
-      if (!e.exiting) setMoveGoal(this, e, b.rallyY * W + b.rallyX, 0), (e.order = "move");
+    const rally = b.rallyX >= 0 && !r.harvester;
+    if (rally) {
+      [e.gx, e.gy] = this.cellCenter(b.rallyY * W + b.rallyX);
+      e.order = "move";
+      if (r.kind === "air") (e.tx = e.gx), (e.ty = e.gy);
+    }
+    if (r.kind === "inf") {
+      // step off the doorstep (or to the rally point) onto a spot no one else has taken;
+      // vehicles pick theirs once they are out of the door
+      const [c, s] = rally ? freeSpotNear(this, e, b.rallyX, b.rallyY) : freeSpotNear(this, e, exit % W, ((exit / W) | 0) + 1, exit);
+      if (c >= 0) {
+        setMoveGoal(this, e, c, s);
+        e.order = "move";
+      } else if (rally) setMoveGoal(this, e, b.rallyY * W + b.rallyX, 0);
     }
     return true;
   }
@@ -756,7 +859,7 @@ export class World {
     for (let y = by; y < by + r.h; y++)
       for (let x = bx; x < bx + r.w; x++) {
         const i = y * W + x;
-        if (!this.map.buildableTerrain(i) || this.bldAt[i] || !p.explored[i]) return false;
+        if (!this.siteOk(r, i) || this.bldAt[i] || !p.explored[i]) return false;
         if (this.vehAt[i]) {
           const v = this.get(this.vehAt[i]);
           if (v) return false;
@@ -876,11 +979,12 @@ export class World {
         }
       }
     }
-    e.powered = !(r.needsPower && p.lowPower) || e.chargedUntil > this.tick;
+    const blacked = e.disabledUntil > this.tick;
+    e.powered = (!(r.needsPower && p.lowPower) || e.chargedUntil > this.tick) && !blacked;
     if (r.wGround || r.wAir) updateStructureCombat(this, e);
     if (r.superweapon && this.settings.superweapons) {
       const sw = SUPERWEAPONS[r.superweapon];
-      if (!p.lowPower && e.swCharge < sw.charge) {
+      if (!p.lowPower && !blacked && e.swCharge < sw.charge) {
         e.swCharge++;
         if (e.swCharge === sw.charge) {
           this.emit({ e: "swready", owner: p.idx, kind: sw.id });
@@ -986,7 +1090,7 @@ export class World {
           y = ((i / W) | 0) + (d === 2 ? 1 : d === 3 ? -1 : 0);
         if (!m.inside(x, y)) continue;
         const j = y * W + x;
-        if (m.oreType[j] === 0 && m.groundOk(j) && !this.bldAt[j] && m.terrain[j] !== 3) {
+        if (m.oreType[j] === 0 && m.oreOk(j) && !this.bldAt[j]) {
           m.oreType[j] = 1;
           m.ore[j] = 1;
           changed = true;
@@ -1000,7 +1104,7 @@ export class World {
   defeat(p: Player) {
     if (p.defeated) return;
     p.defeated = true;
-    p.queues = { bld: [], def: [], inf: [], veh: [], air: [] };
+    p.queues = { bld: [], def: [], inf: [], veh: [], air: [], sea: [] };
     p.ready = { bld: null, def: null };
     for (const e of this.ents) {
       if (e.dead || e.owner !== p.idx) continue;
@@ -1059,6 +1163,7 @@ export class World {
     for (const p of this.players) if (!p.defeated) this.updatePower(p);
     for (const [pi, c] of cmds) this.applyCommand(pi, c);
     for (const p of this.players) if (p.ai && !p.defeated && (this.tick + p.idx * 7) % 10 === 0) aiThink(this, p);
+    if (this.herds.length) updateWildlife(this);
     for (const p of this.players) if (!p.defeated) this.updateProduction(p);
     // path requests
     let budget = MAX_PATHS_PER_TICK;
@@ -1130,8 +1235,9 @@ function computePath(w: World, e: Entity) {
   const self = e.id;
   const avoid = e.waitTicks > 0;
   const m = w.map;
+  const loco = locoOf(e.r);
   const cost = (i: number) => {
-    if (!m.groundOk(i) || w.solid[i]) return -1;
+    if (!m.passable(loco, i) || w.solid[i]) return -1;
     if (isVeh && avoid) {
       const o = w.vehAt[i];
       if (o && o !== self && i !== goal) {

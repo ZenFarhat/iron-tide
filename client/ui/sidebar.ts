@@ -9,7 +9,7 @@ const TABS: { id: Tab; label: string; key: string; queues: Queue[] }[] = [
   { id: "bld", label: "Structures", key: "Q", queues: ["bld"] },
   { id: "def", label: "Defenses", key: "W", queues: ["def"] },
   { id: "inf", label: "Infantry", key: "E", queues: ["inf"] },
-  { id: "veh", label: "Vehicles", key: "R", queues: ["veh", "air"] },
+  { id: "veh", label: "Vehicles", key: "R", queues: ["veh", "air", "sea"] },
 ];
 
 const TAB_ICONS: Record<Tab, string> = {

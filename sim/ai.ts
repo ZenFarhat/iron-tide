@@ -3,7 +3,8 @@
 import type { Entity, Player } from "./entity";
 import type { World } from "./world";
 import { LEP, TPS, dist2 } from "./fixed";
-import { CONSTRUCT_TICKS, RULES, SUPERWEAPONS } from "./rules";
+import { T_WATER } from "./map";
+import { CONSTRUCT_TICKS, FACTION_HARV, FACTION_POWER, RULES, SUPERWEAPONS } from "./rules";
 
 interface AIState {
   baseX: number;
@@ -14,6 +15,13 @@ interface AIState {
   targetId: number;
   engineerSent: number[];
   lastThink: number;
+  /** does the water by our base reach the enemy? undefined until checked */
+  navy?: boolean;
+  /** a cell of the deep-water patch we want our naval yard on */
+  navySeed?: number;
+  /** cached: is there a legal yard site right now, and when to look again */
+  yardOk?: boolean;
+  yardCheckAt?: number;
 }
 
 /** Per-difficulty knobs. Easy and normal hold back on army size, tech and aggression; hard plays flat out. */
@@ -32,31 +40,43 @@ interface Profile {
   defenses: number; // how far down the faction's DEFENSE list to build
   superweaponsAt: number; // tick from which superweapons are built
   jets: number;
+  ships: number; // warships to keep afloat when the water reaches the enemy
 }
 const MIN = 60 * TPS;
 const PROFILES: Record<NonNullable<Player["ai"]>, Profile> = {
-  easy: { thinkEvery: 3, firstWave: 8 * MIN, waveGap: 3 * MIN, waveSize: 4, waveGrow: 1, waveMax: 10, commitAll: false, armyCap: 3500, extraHarv: 0, maxHarv: 3, lab: false, defenses: 2, superweaponsAt: Infinity, jets: 0 },
-  normal: { thinkEvery: 2, firstWave: 6 * MIN, waveGap: 2.5 * MIN, waveSize: 6, waveGrow: 2, waveMax: 16, commitAll: false, armyCap: 9000, extraHarv: 1, maxHarv: 5, lab: true, defenses: 4, superweaponsAt: 15 * MIN, jets: 2 },
-  hard: { thinkEvery: 1, firstWave: 3 * MIN, waveGap: 1400, waveSize: 8, waveGrow: 3, waveMax: 24, commitAll: true, armyCap: Infinity, extraHarv: 2, maxHarv: 6, lab: true, defenses: 6, superweaponsAt: 0, jets: 4 },
+  easy: { thinkEvery: 3, firstWave: 8 * MIN, waveGap: 3 * MIN, waveSize: 4, waveGrow: 1, waveMax: 10, commitAll: false, armyCap: 3500, extraHarv: 0, maxHarv: 3, lab: false, defenses: 2, superweaponsAt: Infinity, jets: 0, ships: 1 },
+  normal: { thinkEvery: 2, firstWave: 6 * MIN, waveGap: 2.5 * MIN, waveSize: 6, waveGrow: 2, waveMax: 16, commitAll: false, armyCap: 9000, extraHarv: 1, maxHarv: 5, lab: true, defenses: 4, superweaponsAt: 15 * MIN, jets: 2, ships: 3 },
+  hard: { thinkEvery: 1, firstWave: 3 * MIN, waveGap: 1400, waveSize: 8, waveGrow: 3, waveMax: 24, commitAll: true, armyCap: Infinity, extraHarv: 2, maxHarv: 6, lab: true, defenses: 6, superweaponsAt: 0, jets: 4, ships: 6 },
 };
 const profile = (p: Player) => PROFILES[p.ai ?? "normal"];
 
 const PLAN: Record<string, string[]> = {
   C: ["c_power", "c_refinery", "c_barracks", "c_power", "c_factory", "c_refinery", "c_aircmd", "c_power", "c_depot", "c_power", "c_lab", "c_power", "c_processor", "c_power", "c_tempest", "c_power", "c_phasegate", "c_factory"],
   D: ["d_power", "d_refinery", "d_barracks", "d_power", "d_factory", "d_refinery", "d_radar", "d_power", "d_depot", "d_power", "d_lab", "d_reactor", "d_silo", "d_bulwark", "d_factory"],
+  S: ["s_power", "s_refinery", "s_barracks", "s_power", "s_factory", "s_refinery", "s_radar", "s_power", "s_depot", "s_power", "s_lab", "s_power", "s_barrage", "s_power", "s_blackout", "s_factory"],
 };
 const DEFENSE: Record<string, [string, number][]> = {
   C: [["c_pillbox", 2], ["c_sam", 1], ["c_spire", 3]],
   D: [["d_sentry", 2], ["d_flakbat", 1], ["d_coil", 3]],
+  S: [["s_gunnest", 2], ["s_flaknest", 1], ["s_pylon", 3]],
 };
 const INF: Record<string, [string, number][]> = {
   C: [["c_trooper", 6], ["c_lancer", 4], ["hound", 1], ["c_wraith", 1]],
   D: [["d_levy", 6], ["d_flak", 2], ["d_arc", 3], ["hound", 1], ["d_jugg", 1]],
+  S: [["s_raider", 6], ["s_harpoon", 4], ["s_screamer", 2], ["hound", 1], ["s_siren", 1]],
 };
 const VEH: Record<string, [string, number][]> = {
   C: [["c_warden", 6], ["c_rover", 2], ["c_lens", 3]],
   D: [["d_bastion", 6], ["d_hauler", 1], ["d_siege", 2], ["d_crawler", 2], ["d_titan", 3], ["d_dread", 1]],
+  S: [["s_corsair", 6], ["s_skiff", 3], ["s_howler", 2], ["s_leviathan", 2]],
 };
+const SEA: Record<string, [string, number][]> = {
+  C: [["c_cutter", 3], ["c_frigate", 4], ["c_cruiser", 2]],
+  D: [["d_gunboat", 3], ["d_monitor", 4], ["d_barge", 2]],
+  S: [["s_runner", 5], ["s_galleon", 2]],
+};
+const NAVYARD: Record<string, string> = { C: "c_navyard", D: "d_navyard", S: "s_navyard" };
+const SUPERWEAPON_TYPES = ["c_tempest", "c_phasegate", "d_silo", "d_bulwark", "s_barrage", "s_blackout"];
 
 export function aiInit(w: World, p: Player) {
   const mcv = w.ents.find((e) => e.owner === p.idx && e.type === "mhv");
@@ -134,9 +154,18 @@ export function aiThink(w: World, p: Player) {
     else w.applyCommand(p.idx, { c: "cancel", type: t });
   }
   if (!hub && !blds.length) return;
-  // 3. structures
+  // 3. structures (a naval yard jumps the queue once the factory is up and the water is in reach)
   if (!p.queues.bld.length && !p.ready.bld && hub) {
-    const next = nextStructure(w, p, ents, prof);
+    const yard = NAVYARD[p.faction];
+    const navyPending = prof.ships > 0 && p.tags.has("factory") && !p.tags.has("shipyard") && count(ents, yard) === 0 && w.canBuild(p, yard) && navyWorthIt(w, p, st);
+    if (navyPending && w.tick >= (st.yardCheckAt ?? 0)) {
+      st.yardOk = !!findSpot(w, p, yard, st);
+      st.yardCheckAt = w.tick + 200;
+    }
+    let next = navyPending && st.yardOk ? yard : nextStructure(w, p, ents, prof);
+    // no legal yard site yet: lay power plants as stepping stones toward the shore
+    const pw = FACTION_POWER[p.faction];
+    if (!next && navyPending && !st.yardOk && p.credits > 1000 && count(ents, pw) < 8) next = pw;
     if (next) w.applyCommand(p.idx, { c: "build", type: next });
   }
   // 4. defenses
@@ -151,13 +180,13 @@ export function aiThink(w: World, p: Player) {
       }
     }
     if (!p.queues.def.length && p.credits > 6000 && w.tick >= prof.superweaponsAt) {
-      const sw = ["c_tempest", "c_phasegate", "d_silo", "d_bulwark"].find((t) => w.canBuild(p, t) && count(ents, t) === 0);
+      const sw = SUPERWEAPON_TYPES.find((t) => w.canBuild(p, t) && count(ents, t) === 0);
       if (sw) w.applyCommand(p.idx, { c: "build", type: sw });
     }
   }
   // 5. harvesters
   const refs = blds.filter((e) => e.r.tags.includes("refinery") && e.built >= CONSTRUCT_TICKS).length;
-  const harvType = p.faction === "C" ? "c_harv" : "d_harv";
+  const harvType = FACTION_HARV[p.faction];
   const harvs = count(ents, harvType) + p.queues.veh.filter((i) => i.type === harvType).length;
   const wantHarv = Math.min(prof.maxHarv, refs + prof.extraHarv);
   if (harvs < wantHarv && w.canBuild(p, harvType) && p.queues.veh.length < 3) w.applyCommand(p.idx, { c: "build", type: harvType });
@@ -176,7 +205,7 @@ export function aiThink(w: World, p: Player) {
     opts.map(([t, wt]): [string, number] => {
       const r = RULES[t];
       const aa = !!(r.wAir || r.deployAir) && !(r.wGround && r.wAir === r.wGround);
-      if (t === "d_flak" || t === "c_rover" || t === "d_hauler") return [t, eAir > 0 ? wt * 3 + eAir : Math.max(1, wt >> 1)];
+      if (t === "d_flak" || t === "c_rover" || t === "d_hauler" || t === "s_skiff") return [t, eAir > 0 ? wt * 3 + eAir : Math.max(1, wt >> 1)];
       if (t === "c_lancer") return [t, wt + (eVeh > eInf ? 3 : 0) + (eAir ? 2 : 0)];
       if (aa && eAir === 0) return [t, wt];
       return [t, wt];
@@ -189,9 +218,9 @@ export function aiThink(w: World, p: Player) {
     if (e.kind === "inf") infValue += e.r.cost;
   }
   let queued = 0;
-  for (const q of ["inf", "veh", "air"] as const) for (const i of p.queues[q]) if (!RULES[i.type].harvester && !RULES[i.type].engineer) queued += RULES[i.type].cost;
+  for (const q of ["inf", "veh", "air", "sea"] as const) for (const i of p.queues[q]) if (!RULES[i.type].harvester && !RULES[i.type].engineer) queued += RULES[i.type].cost;
   const armyRoom = armyValue + queued < prof.armyCap;
-  const infCap = p.faction === "D" ? 0.4 : 0.55;
+  const infCap = p.faction === "D" ? 0.4 : p.faction === "S" ? 0.45 : 0.55;
   const infOk = infValue / armyValue < infCap || !p.tags.has("factory") || p.credits > 3000;
   if (p.queues.inf.length < 2 && p.credits > 400 + reserve && infOk) {
     // capture fuel wells with engineers
@@ -204,6 +233,14 @@ export function aiThink(w: World, p: Player) {
     if (t) w.applyCommand(p.idx, { c: "build", type: t });
   }
   if (armyRoom && p.faction === "C" && p.queues.air.length < 1 && p.credits > 2000 && count(ents, "c_striker") < prof.jets && w.canBuild(p, "c_striker")) w.applyCommand(p.idx, { c: "build", type: "c_striker" });
+  // navy: a yard once the land war is rolling, then a few warships
+  if (hub && p.tags.has("factory") && navyWorthIt(w, p, st)) {
+    const ships = ents.filter((e) => e.r.loco === "naval").length + p.queues.sea.length;
+    if (armyRoom && ships < prof.ships && p.queues.sea.length < 1 && p.credits > 1200) {
+      const t = pickWeighted(w, SEA[p.faction], p, ents);
+      if (t) w.applyCommand(p.idx, { c: "build", type: t });
+    }
+  }
   // 7. engineers → fuel wells
   for (const e of ents) {
     if (e.type !== "engineer" || e.order !== "idle") continue;
@@ -245,7 +282,8 @@ export function aiThink(w: World, p: Player) {
       } else w.applyCommand(p.idx, { c: "sw", kind: swId, x: tgt[0], y: tgt[1] });
     }
   // 10. army control
-  const army = ents.filter((e) => e.kind !== "bld" && !e.r.harvester && !e.r.engineer && e.type !== "mhv" && (e.r.wGround || e.r.wAir || e.r.deployGround));
+  // jets fly their own strikes (below) and would never rearm if swept up into ground waves
+  const army = ents.filter((e) => e.kind !== "bld" && !e.r.harvester && !e.r.engineer && !e.r.jet && e.type !== "mhv" && (e.r.wGround || e.r.wAir || e.r.deployGround));
   // defend base
   let threat: Entity | null = null;
   for (const b of blds) {
@@ -271,8 +309,9 @@ export function aiThink(w: World, p: Player) {
   // attack waves
   st.attackers = st.attackers.filter((id) => w.get(id));
   const idle = army.filter((e) => e.order === "idle" && !e.deployed && !st.attackers.includes(e.id));
-  // a capped army that can't reach the wave size attacks with what it has
-  if (w.tick >= st.nextWave && (idle.length >= st.waveSize || (!armyRoom && idle.length >= 3))) {
+  // an army that can't reach the wave size (capped, or broke once the ore runs dry) attacks with what it has
+  const stalled = !armyRoom || w.tick >= st.nextWave + 3 * MIN;
+  if (w.tick >= st.nextWave && (idle.length >= st.waveSize || (stalled && idle.length >= 3))) {
     const target = enemyTarget(w, p, st);
     if (target) {
       const ids = (prof.commitAll ? idle : idle.slice(0, st.waveSize)).map((e) => e.id);
@@ -299,7 +338,7 @@ export function aiThink(w: World, p: Player) {
   if ((w.tick / 10) % 30 === 0) {
     const rx = st.baseX + Math.sign(w.map.w / 2 - st.baseX) * 6,
       ry = st.baseY + Math.sign(w.map.h / 2 - st.baseY) * 6;
-    const loiter = idle.filter((e) => dist2(e.x >> 8, e.y >> 8, rx, ry) > 36 && e.kind !== "air");
+    const loiter = idle.filter((e) => dist2(e.x >> 8, e.y >> 8, rx, ry) > 36 && e.kind !== "air" && e.r.loco !== "naval");
     if (loiter.length) w.applyCommand(p.idx, { c: "move", ids: loiter.map((e) => e.id), x: rx, y: ry });
   }
   // jets: strike
@@ -308,6 +347,51 @@ export function aiThink(w: World, p: Player) {
     const tgt = w.get(st.targetId) ?? enemyTarget(w, p, st);
     if (tgt) w.applyCommand(p.idx, { c: "attack", ids: [j.id], t: tgt.id });
   }
+}
+
+/** warships only pay off when open water near our base connects to an enemy's side of the map */
+function navyWorthIt(w: World, p: Player, st: AIState): boolean {
+  if (st.navy !== undefined) return st.navy;
+  const m = w.map;
+  const W = m.w;
+  st.navy = false;
+  // a 3×3 patch of deep water within reach of the base
+  let seed = -1;
+  for (let r = 3; r <= 16 && seed < 0; r++)
+    for (let dy = -r; dy <= r && seed < 0; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const x = st.baseX + dx,
+          y = st.baseY + dy;
+        let ok = m.inside(x, y) && m.inside(x + 2, y + 2);
+        for (let k = 0; ok && k < 9; k++) ok = m.terrain[(y + ((k / 3) | 0)) * W + x + (k % 3)] === T_WATER;
+        if (ok) {
+          seed = y * W + x;
+          st.navySeed = seed;
+          break;
+        }
+      }
+  if (seed < 0) return false;
+  // does that water lead to within striking distance of another start?
+  const others = m.starts.filter((s) => dist2(s.x, s.y, st.baseX, st.baseY) > 20 * 20);
+  const seen = new Uint8Array(W * m.h);
+  const q = [seed];
+  seen[seed] = 1;
+  for (let h = 0; h < q.length; h++) {
+    const i = q[h];
+    const x = i % W,
+      y = (i / W) | 0;
+    if (others.some((s) => dist2(s.x, s.y, x, y) < 22 * 22)) {
+      st.navy = true;
+      break;
+    }
+    for (const n of [i - 1, i + 1, i - W, i + W]) {
+      if (n < 0 || n >= W * m.h || seen[n] || Math.abs((n % W) - x) > 1 || !m.waterOk(n)) continue;
+      seen[n] = 1;
+      q.push(n);
+    }
+  }
+  return st.navy;
 }
 
 function nextStructure(w: World, p: Player, ents: Entity[], prof: Profile): string | null {
@@ -322,13 +406,13 @@ function nextStructure(w: World, p: Player, ents: Entity[], prof: Profile): stri
     if (r.cost > p.credits + 600 && r.power <= 0) return null;
     // power check
     if (r.power < 0 && p.powerOut - p.powerIn + r.power < 0) {
-      const pw = p.faction === "C" ? "c_power" : "d_power";
+      const pw = FACTION_POWER[p.faction];
       return w.canBuild(p, pw) ? pw : null;
     }
     return t;
   }
   // late game: more power if low, otherwise extra refinery/factory occasionally
-  if (p.powerOut - p.powerIn < 100) return p.faction === "C" ? "c_power" : "d_power";
+  if (p.powerOut - p.powerIn < 100) return FACTION_POWER[p.faction];
   return null;
 }
 
@@ -356,6 +440,12 @@ function findSpot(w: World, p: Player, type: string, st: AIState): [number, numb
         if (isRef && !w.map.inside(bx + 1, by + r.h)) continue;
         if (isRef && !w.groundPassable((by + r.h) * W + bx + 1)) continue;
         let s = rad * 10;
+        // until the naval yard is down, grow the base toward the water it will sit on
+        if (st.navy && st.navySeed !== undefined && !p.tags.has("shipyard") && !isDef) {
+          const sx = st.navySeed % W,
+            sy = (st.navySeed / W) | 0;
+          s = rad * 4 + Math.floor(Math.sqrt((bx - sx) * (bx - sx) + (by - sy) * (by - sy))) * 8;
+        }
         if (isRef) s = oreDist(w, bx + 1, by + 1) * 12 + rad * 2;
         if (isDef) {
           const d = Math.floor(Math.sqrt((bx - ex) * (bx - ex) + (by - ey) * (by - ey)));
@@ -366,7 +456,8 @@ function findSpot(w: World, p: Player, type: string, st: AIState): [number, numb
           best = [bx, by];
         }
       }
-    if (best && rad > 8) break;
+    // normally settle for the first decent ring; while reaching for the shore, search all the way out
+    if (best && rad > 8 && !(st.navy && !p.tags.has("shipyard"))) break;
   }
   return best;
 }

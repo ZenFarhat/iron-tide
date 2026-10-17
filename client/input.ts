@@ -118,7 +118,7 @@ export class Input {
   }
 
   private canAttack(u: Entity, t: Entity, force: boolean) {
-    if (!force && !this.game.world.isEnemy(u.owner, t.owner)) return false;
+    if (!force && !this.game.world.isEnemy(u.owner, t.owner) && !t.r.animal) return false;
     const air = t.flying;
     if (u.r.hero && t.kind === "bld") return true;
     const ids = u.r.deployable && u.kind === "inf" ? [u.deployed ? u.r.deployGround : u.r.wGround, u.deployed ? u.r.deployAir : u.r.wAir] : [u.r.wGround, u.r.wAir];
@@ -190,7 +190,7 @@ export class Input {
       return { cursor: "amove", exec: () => (send({ c: "amove", ids, x: cx, y: cy }), g.setMode({ kind: "none" }), this.ack()) };
     }
     if (!units.length) {
-      if (selB && selB.owner === me && selB.kind === "bld" && !target && (selB.r.tags.includes("barracks") || selB.r.tags.includes("factory") || selB.r.tags.includes("aircmd")) && w.map.inside(cx, cy))
+      if (selB && selB.owner === me && selB.kind === "bld" && !target && ["barracks", "factory", "aircmd", "shipyard"].some((t) => selB.r.tags.includes(t)) && w.map.inside(cx, cy))
         return { cursor: "move", exec: () => (send({ c: "rally", t: selB.id, x: cx, y: cy }), g.audio.play("click")) };
       return { cursor: target ? "select" : "default" };
     }
@@ -230,7 +230,8 @@ export class Input {
           },
         };
       }
-      if (enemy) {
+      // wildlife is fair game too: hunt it down, or put down a lion stalking your troops
+      if (enemy || target.r.animal) {
         const atk = units.filter((u) => this.canAttack(u, target, false));
         if (atk.length) return { cursor: "attack", exec: () => (send({ c: "attack", ids: atk.map((u) => u.id), t: target.id }), this.ack()) };
       }
@@ -241,9 +242,9 @@ export class Input {
     const harv = units.filter((u) => u.r.harvester);
     if (harv.length && w.map.oreType[i] && w.map.ore[i] && harv.length === units.length) return { cursor: "harvest", exec: () => (send({ c: "harvest", ids, x: cx, y: cy }), this.ack()) };
     const explored = me < 0 || w.players[me].explored[i];
-    const groundOk = w.map.groundOk(i) && !w.solid[i];
-    const anyAir = units.some((u) => u.kind === "air");
-    if (!groundOk && !anyAir && explored) return { cursor: "nomove" };
+    // somebody in the selection has to be able to get there (ships on water, hovercraft anywhere wet or dry)
+    const reachable = units.some((u) => u.kind === "air" || w.canEnter(u, i));
+    if (!reachable && explored) return { cursor: "nomove" };
     return { cursor: "move", exec: () => (send({ c: "move", ids, x: cx, y: cy }), this.ack()) };
   }
 

@@ -1,6 +1,8 @@
 // Menus: main menu, skirmish setup, multiplayer browser and room lobby.
-import { DEFAULT_LOBBY, GAME_SPEEDS, MAX_SLOTS, PLAYER_COLORS, type AIDifficulty, type LobbySettings, type RoomState, type RoomSummary, type ServerMsg, type SlotFaction, type StartPlayer, type Turn } from "../shared/protocol";
+import { DEFAULT_LOBBY, GAME_SPEEDS, MAX_SLOTS, PLAYER_COLORS, rollFaction, type AIDifficulty, type LobbySettings, type RoomState, type RoomSummary, type ServerMsg, type SlotFaction, type StartPlayer, type Turn } from "../shared/protocol";
 import { FACTIONS } from "../sim/rules";
+import { THEMES } from "../sim/map";
+import { MAPS, mapDef } from "../sim/maps";
 import { Net } from "./net";
 
 export interface SkirmishStart {
@@ -56,16 +58,24 @@ function colorOptions(sel: number, taken: Set<number>) {
 function teamOptions(sel: number) {
   return [0, 1, 2, 3, 4].map((t) => `<option value="${t}" ${t === sel ? "selected" : ""}>${t === 0 ? "—" : "Team " + t}</option>`).join("");
 }
+const themeName = (id: string) => THEMES.find((t) => t.id === id)?.name ?? id;
+
 function settingsHtml(s: LobbySettings, editable: boolean, seed?: number) {
   const dis = editable ? "" : "disabled";
+  const def = s.map !== "random" ? mapDef(s.map) : undefined;
+  const genDis = def ? "disabled" : dis;
   return `<div class="settings">
-    <label>Map<select data-s="mapSize" ${dis}>${MAP_SIZES.map(([v, n]) => `<option value="${v}" ${v === s.mapSize ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+    <label class="wide">Battlefield<select data-s="map" data-str ${dis}><option value="random" ${!def ? "selected" : ""}>Random map</option>${MAPS.map((m) => `<option value="${m.id}" ${m.id === s.map ? "selected" : ""}>${m.name} · ${m.sym} players · ${themeName(m.theme)}</option>`).join("")}</select></label>
+    <label>Biome<select data-s="theme" data-str ${genDis}>${THEMES.map((t) => `<option value="${t.id}" ${t.id === (def ? def.theme : s.theme) ? "selected" : ""}>${t.name}</option>`).join("")}</select></label>
+    <label>Map size<select data-s="mapSize" ${genDis}>${MAP_SIZES.map(([v, n]) => `<option value="${v}" ${v === (def ? -1 : s.mapSize) ? "selected" : ""}>${n}</option>`).join("")}${def ? `<option selected>${def.size}×${def.size}</option>` : ""}</select></label>
     <label>Credits<select data-s="credits" ${dis}>${CREDITS.map((v) => `<option value="${v}" ${v === s.credits ? "selected" : ""}>$${v.toLocaleString()}</option>`).join("")}</select></label>
     <label>Starting units<select data-s="startUnits" ${dis}>${[0, 1, 2, 3, 5, 10].map((v) => `<option value="${v}" ${v === s.startUnits ? "selected" : ""}>${v}</option>`).join("")}</select></label>
     <label>Game speed<select data-s="speed" ${dis}>${GAME_SPEEDS.map((v) => `<option value="${v}" ${v === s.speed ? "selected" : ""}>${v}×${v === 1 ? " (normal)" : ""}</option>`).join("")}</select></label>
     <label class="chk"><input type="checkbox" data-s="superweapons" ${s.superweapons ? "checked" : ""} ${dis}/> Superweapons</label>
     <label class="chk"><input type="checkbox" data-s="shortGame" ${s.shortGame ? "checked" : ""} ${dis}/> Short game</label>
+    <label class="chk"><input type="checkbox" data-s="wildlife" ${s.wildlife ? "checked" : ""} ${dis}/> Wildlife</label>
     ${seed !== undefined ? `<label>Map seed<input data-s="seed" type="number" value="${seed}" ${dis}/></label>` : ""}
+    ${def ? `<p class="map-desc">${def.desc}</p>` : ""}
   </div>`;
 }
 /** link that opens the game straight into a room */
@@ -103,7 +113,9 @@ function readSettings(root: HTMLElement): Partial<LobbySettings> & { seed?: numb
   const out: any = {};
   root.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-s]").forEach((el) => {
     const k = el.dataset.s!;
+    if (el.disabled && el instanceof HTMLSelectElement && k === "mapSize") return; // shown for info only on hand-made maps
     if (el instanceof HTMLInputElement && el.type === "checkbox") out[k] = el.checked;
+    else if (el.dataset.str !== undefined) out[k] = el.value;
     else out[k] = Number(el.value);
   });
   return out;
@@ -171,7 +183,9 @@ export class Menu {
         <li>Keep power positive: low power slows production and shuts down defenses and radar.</li>
         <li>Destroy every enemy structure to win.</li></ol>
       <h3>Economy</h3><p>Harvesters collect gold ore ($25) and blue gems ($50). Ore slowly regrows. Capture <b>Fuel Wells</b> with Engineers for steady income.</p>
-      <h3>Factions</h3><p><b>Concord</b> fields fast tanks, light-beam weapons, Striker jets and a lightning-storm superweapon.<br/><b>Dominion</b> fields heavy armor, arc weapons, rocket artillery, airships and a city-killing missile.</p></div>
+      <h3>Factions</h3><p><b>Concord</b> fields fast tanks, light-beam weapons, Striker jets and a lightning-storm superweapon.<br/><b>Dominion</b> fields heavy armor, arc weapons, rocket artillery, airships and a city-killing missile.<br/><b>Syndicate</b> fields hovercraft that cross water, sonic weapons and an amphibious hero. It earns salvage credits for every enemy it destroys, and can black out enemy vehicles or call down an artillery barrage.</p>
+      <h3>Navies</h3><p>Build a <b>Naval Yard</b> on open water (it needs a factory). Warships sail rivers, lakes and seas, and long-range ships shell targets inland. <b>Fords</b> (pale shallow water) let both ships and ground units through.</p>
+      <h3>Battlefields</h3><p>Pick a random map in any biome, or one of the hand-made maps. On snow and tundra, tanks can drive over <b>frozen lakes</b> but ships cannot sail them. Wild animals graze in herds and bolt when shot. Lions, wolves, polar bears and jackals hunt infantry that strays near them; elephants and musk oxen charge anyone who attacks them.</p></div>
       <div><h3>Controls</h3><table class="keys">
         <tr><td>Left-drag</td><td>Box select</td></tr>
         <tr><td>Left-click</td><td>Select / order (classic)</td></tr>
@@ -241,10 +255,21 @@ export class Menu {
           slots.push({ kind: "ai", name: "AI", faction: "R", color: PLAYER_COLORS.findIndex((_, i) => !used.has(i)), team: 0, ai: "normal" });
           render();
         };
-      this.root.querySelectorAll<HTMLElement>("[data-s]").forEach((el) => (el.onchange = () => Object.assign(settings, readSettings(this.root))));
+      this.root.querySelectorAll<HTMLElement>("[data-s]").forEach(
+        (el) =>
+          (el.onchange = () => {
+            Object.assign(settings, readSettings(this.root));
+            if (el.dataset.s === "map") render(); // hand-made maps fix the biome and size
+          }),
+      );
       this.root.querySelector<HTMLButtonElement>("#sk-back")!.onclick = () => this.main();
       this.root.querySelector<HTMLButtonElement>("#sk-start")!.onclick = () => {
         Object.assign(settings, readSettings(this.root));
+        const def = settings.map !== "random" ? mapDef(settings.map) : undefined;
+        if (def && slots.length > def.sym) {
+          alert(`${def.name} is for up to ${def.sym} players.`);
+          return;
+        }
         const teams = new Set(slots.map((s) => s.team || 100 + slots.indexOf(s)));
         if (teams.size < 2) {
           alert("Everyone is on the same team — set at least one opponent on a different team.");
@@ -252,7 +277,7 @@ export class Menu {
         }
         const players: StartPlayer[] = slots.map((s) => ({
           name: s.kind === "human" ? s.name : `AI ${s.ai}`,
-          faction: s.faction === "R" ? (Math.random() < 0.5 ? "C" : "D") : s.faction,
+          faction: rollFaction(s.faction),
           color: s.color,
           team: s.team,
           ai: s.kind === "ai" ? s.ai : null,

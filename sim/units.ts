@@ -2,7 +2,7 @@
 import type { Entity } from "./entity";
 import type { World } from "./world";
 import { LEP, HALF, dist2, facingDiff, facingTo, isqrt, rotateToward } from "./fixed";
-import { GEM_VALUE, HARVEST_TICKS, ORE_VALUE, RULES, UNLOAD_TICKS, WEAPONS, CONSTRUCT_TICKS, type Weapon } from "./rules";
+import { FACTION_HUB, GEM_VALUE, HARVEST_TICKS, ORE_VALUE, RULES, UNLOAD_TICKS, WEAPONS, CONSTRUCT_TICKS, locoOf, type Loco, type Weapon } from "./rules";
 import { fireWeapon, findTarget, weaponFor, killEntity, versesFor } from "./combat";
 
 const SUB_OFFS = [
@@ -124,7 +124,7 @@ function moveGround(w: World, e: Entity) {
       return;
     }
     const next = e.path[e.pathI];
-    if (!e.exiting && !w.groundPassable(next)) {
+    if (!e.exiting && !w.canEnter(e, next)) {
       // world changed; repath
       setMoveGoal(w, e, e.goalCell, e.sub);
       return;
@@ -184,11 +184,13 @@ function moveGround(w: World, e: Entity) {
     e.tries = 0;
     if (e.exiting && e.pathI >= e.path.length) {
       e.exiting = false;
-      // clear the factory door
-      if (e.order === "idle" && !e.r.harvester) {
+      // out the door with no new orders: head for the rally point, or just clear the door
+      if (e.goalCell === e.cell && !e.r.harvester && (e.order === "idle" || e.order === "move")) {
         const W = w.map.w;
-        const c = nearestFreeCell(w, (e.cell % W) + ((e.id % 3) - 1), ((e.cell / W) | 0) + 2, false);
+        const rally = e.order === "move" && e.gx >= 0;
+        const [c] = rally ? freeSpotNear(w, e, e.gx >> 8, e.gy >> 8) : freeSpotNear(w, e, e.cell % W, ((e.cell / W) | 0) + 2, e.cell);
         if (c >= 0) setMoveGoal(w, e, c, 0);
+        else if (rally) e.order = "idle";
       }
     }
   }
@@ -233,8 +235,8 @@ function sidestep(w: World, e: Entity, o: Entity): boolean {
       ny = cy + dy;
     if (!w.map.inside(nx, ny)) continue;
     const i = ny * W + nx;
-    if (avoid.has(i) || !w.groundPassable(i) || w.vehAt[i]) continue;
-    if (dx && dy && (!w.groundPassable(cy * W + nx) || !w.groundPassable(ny * W + cx))) continue;
+    if (avoid.has(i) || !w.canEnter(e, i) || w.vehAt[i]) continue;
+    if (dx && dy && (!w.canEnter(e, cy * W + nx) || !w.canEnter(e, ny * W + cx))) continue;
     // prefer cells that don't block the other unit's next steps
     const d = Math.abs(dx) + Math.abs(dy);
     if (d < bd) {
@@ -250,7 +252,7 @@ function sidestep(w: World, e: Entity, o: Entity): boolean {
   return true;
 }
 
-export function nearestFreeCell(w: World, x: number, y: number, inf: boolean, exclude?: Set<number>): number {
+export function nearestFreeCell(w: World, x: number, y: number, inf: boolean, exclude?: Set<number>, loco: Loco = inf ? "foot" : "track"): number {
   const m = w.map;
   const W = m.w;
   x = Math.max(0, Math.min(m.w - 1, x));
@@ -263,7 +265,7 @@ export function nearestFreeCell(w: World, x: number, y: number, inf: boolean, ex
           cy = y + dy;
         if (!m.inside(cx, cy)) continue;
         const i = cy * W + cx;
-        if (!w.groundPassable(i)) continue;
+        if (!w.passableFor(loco, i)) continue;
         if (exclude && exclude.has(i)) continue;
         if (inf) {
           if (w.infAt[i] < 3 && !w.vehAt[i]) return i;
@@ -271,6 +273,58 @@ export function nearestFreeCell(w: World, x: number, y: number, inf: boolean, ex
       }
   }
   return -1;
+}
+
+/** sub-cell slot an infantryman is standing on or heading for */
+function subOf(w: World, o: Entity): number {
+  const [cx, cy] = w.cellCenter(o.goalCell);
+  let best = 0,
+    bd = Infinity;
+  for (let s = 0; s < SUB_OFFS.length; s++) {
+    const d = dist2(o.goalX - cx, o.goalY - cy, SUB_OFFS[s][0], SUB_OFFS[s][1]);
+    if (d < bd) {
+      bd = d;
+      best = s;
+    }
+  }
+  return best;
+}
+
+/** nearest spot to (x, y) that no unit stands on or is already heading to, as [cell, sub-slot],
+ *  so freshly built units fan out instead of piling onto one point. [-1, 0] if none. */
+export function freeSpotNear(w: World, e: Entity, x: number, y: number, avoid = -1): [number, number] {
+  const m = w.map;
+  const W = m.w;
+  const vehClaim = new Set<number>();
+  const infClaim = new Map<number, number>(); // cell → bitmask of claimed sub-slots
+  for (const o of w.ents) {
+    if (o.dead || o === e || o.goalCell < 0) continue;
+    if (o.kind === "veh") vehClaim.add(o.goalCell);
+    else if (o.kind === "inf") infClaim.set(o.goalCell, (infClaim.get(o.goalCell) ?? 0) | (1 << subOf(w, o)));
+  }
+  x = Math.max(0, Math.min(m.w - 1, x));
+  y = Math.max(0, Math.min(m.h - 1, y));
+  for (let r = 0; r < 10; r++)
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const cx = x + dx,
+          cy = y + dy;
+        if (!m.inside(cx, cy)) continue;
+        const i = cy * W + cx;
+        if (i === avoid || !w.canEnter(e, i) || w.vehAt[i] || vehClaim.has(i)) continue;
+        const used = infClaim.get(i) ?? 0;
+        if (e.kind !== "inf") {
+          if (!used && !w.infAt[i]) return [i, 0];
+          continue;
+        }
+        if (w.infAt[i] >= 3) continue;
+        let n = 0;
+        for (let s = 0; s < SUB_OFFS.length; s++) if (used & (1 << s)) n++;
+        if (n >= 3) continue;
+        for (const s of [1, 2, 3, 4, 0]) if (!(used & (1 << s))) return [i, s];
+      }
+  return [-1, 0];
 }
 
 export function groupMove(w: World, units: Entity[], x: number, y: number, order: "move" | "amove") {
@@ -290,6 +344,19 @@ export function groupMove(w: World, units: Entity[], x: number, y: number, order
     if (u.r.jet) u.air = u.air === "returning" ? "flying" : u.air;
   }
   if (!ground.length) return;
+  // ground troops, hovercraft and ships each fan out over the cells they can actually reach
+  const classes: [Loco, Entity[]][] = [
+    ["track", ground.filter((u) => { const l = locoOf(u.r); return l === "foot" || l === "track"; })],
+    ["hover", ground.filter((u) => locoOf(u.r) === "hover")],
+    ["naval", ground.filter((u) => locoOf(u.r) === "naval")],
+  ];
+  for (const [loco, list] of classes) if (list.length) assignFormation(w, list, x, y, order, loco);
+}
+
+function assignFormation(w: World, ground: Entity[], x: number, y: number, order: "move" | "amove", loco: Loco) {
+  const m = w.map;
+  const W = m.w;
+  const target = y * W + x;
   const tcx = x * LEP + HALF,
     tcy = y * LEP + HALF;
   const vehs = ground.filter((u) => u.kind === "veh").sort((a, b) => dist2(a.x, a.y, tcx, tcy) - dist2(b.x, b.y, tcx, tcy) || a.id - b.id);
@@ -299,9 +366,16 @@ export function groupMove(w: World, units: Entity[], x: number, y: number, order
   const seen = new Set<number>();
   const q: number[] = [];
   let start = target;
-  if (!w.groundPassable(start)) {
-    const alt = nearestFreeCell(w, x, y, false);
-    if (alt < 0) return;
+  if (!w.passableFor(loco, start)) {
+    const alt = nearestFreeCell(w, x, y, false, undefined, loco);
+    if (alt < 0) {
+      // no reachable cell anywhere near (ships ordered far inland): head that way regardless
+      for (const u of ground) {
+        prepMove(w, u, order, x, y);
+        setMoveGoal(w, u, target, 0);
+      }
+      return;
+    }
     start = alt;
   }
   q.push(start);
@@ -316,7 +390,7 @@ export function groupMove(w: World, units: Entity[], x: number, y: number, order
       const u = vehs[vi++];
       prepMove(w, u, order, x, y);
       setMoveGoal(w, u, c, 0);
-    } else if (ii < infs.length && (!occ || groupIds.has(occ) === false || true) && vi >= vehs.length) {
+    } else if (ii < infs.length && vi >= vehs.length) {
       // up to 4 infantry per cell (skip cells claimed by our vehicles)
       for (let s = 1; s <= 4 && ii < infs.length; s++) {
         const u = infs[ii++];
@@ -341,7 +415,7 @@ export function groupMove(w: World, units: Entity[], x: number, y: number, order
         ny = cy + dy;
       if (!m.inside(nx, ny)) continue;
       const n = ny * W + nx;
-      if (seen.has(n) || !w.groundPassable(n)) continue;
+      if (seen.has(n) || !w.passableFor(loco, n)) continue;
       seen.add(n);
       q.push(n);
     }
@@ -383,7 +457,7 @@ export function scatterUnit(w: World, e: Entity, avoid?: number[]) {
       ny = cy + dy;
     if (!w.map.inside(nx, ny)) continue;
     const i = ny * W + nx;
-    if (!w.groundPassable(i) || (ex && ex.has(i))) continue;
+    if (!w.canEnter(e, i) || (ex && ex.has(i))) continue;
     if (e.kind === "veh" && w.vehAt[i]) continue;
     if (e.kind === "inf" && (w.infAt[i] >= 3 || w.vehAt[i])) continue;
     const ord = e.order;
@@ -423,7 +497,7 @@ export function deployUnit(w: World, e: Entity) {
     const cx = e.cell % W,
       cy = (e.cell / W) | 0;
     const p = w.players[e.owner];
-    const hubType = p.faction === "C" ? "c_hub" : "d_hub";
+    const hubType = FACTION_HUB[p.faction];
     const bx = cx - 1,
       by = cy - 1;
     if (!canDeployAt(w, e, bx, by)) {
@@ -484,6 +558,8 @@ export function updateUnit(w: World, e: Entity) {
     e.hp = Math.min(e.r.hp, e.hp + Math.max(1, Math.floor(e.r.hp / 100)));
   }
   if (e.kind === "air") return updateAir(w, e);
+  // blacked out: engines and guns dead until the pulse wears off
+  if (e.disabledUntil > w.tick && e.kind === "veh") return;
   if (e.exiting) return moveGround(w, e);
   if (e.r.harvester && e.order === "harvest") {
     updateHarvester(w, e);
@@ -556,7 +632,7 @@ function autoDeploy(w: World, e: Entity, t: Entity): boolean {
 function idleCombat(w: World, e: Entity, guard: boolean) {
   if (!hasWeapon(e)) return;
   let t = e.target ? w.get(e.target) : undefined;
-  if (t && !w.isEnemy(e.owner, t.owner) && e.autoTarget) t = undefined;
+  if (t && !w.isEnemy(e.owner, t.owner) && e.autoTarget && !t.r.animal) t = undefined;
   if (!t) {
     e.target = 0;
     if ((w.tick + e.id) % 8 !== 0) return;
@@ -633,6 +709,8 @@ function chase(w: World, e: Entity, t: Entity) {
     if (t.kind === "bld") goal = perimeterCell(w, t, e);
     else if (t.kind === "air") goal = w.cellOf(t.x, t.y);
     else goal = t.cell;
+    // nowhere to stand next to it (a ship chasing a target inland): get as close as the terrain allows
+    if (goal < 0) goal = w.cellOf(t.x, t.y);
     if (goal >= 0 && goal !== e.goalCell) setMoveGoal(w, e, goal, e.kind === "inf" ? 1 + (e.id % 4) : 0);
     else if (goal >= 0 && pathDone(e) && goal !== e.cell) setMoveGoal(w, e, goal, e.sub);
     void W;
@@ -651,7 +729,7 @@ export function perimeterCell(w: World, b: Entity, u: Entity): number {
       if (x >= b.bx && x < b.bx + b.r.w && y >= b.by && y < b.by + b.r.h) continue;
       if (!m.inside(x, y)) continue;
       const i = y * W + x;
-      if (!w.groundPassable(i)) continue;
+      if (!w.canEnter(u, i)) continue;
       if (u.kind === "veh" && w.vehAt[i] && w.vehAt[i] !== u.id) continue;
       const d = dist2(u.x, u.y, x * LEP + HALF, y * LEP + HALF);
       if (d < bd) {
@@ -1258,10 +1336,28 @@ function updateAir(w: World, e: Entity) {
       }
       // keep drifting slowly while firing
       flyToward(e, tx, ty, Math.floor(sp / 4));
+    } else if (d <= wp.range) {
+      // in range but lined up wrong (or right on top of it, where flyToward stops steering): bank round
+      e.facing = rotateToward(e.facing, want, e.r.rot);
+      flyToward(e, tx, ty, Math.floor(sp / 4));
     } else flyToward(e, tx, ty, sp);
   } else if (e.order === "move" || e.order === "amove") {
-    if (flyToward(e, e.tx, e.ty, sp)) e.order = "idle";
-  } else if (e.order === "idle" && e.ammo < (e.r.ammo ?? 1) && (w.tick + e.id) % 40 === 0) {
+    const t = e.order === "amove" && e.ammo > 0 && (w.tick + e.id) % 8 === 0 ? findTarget(w, e, e.r.sight * LEP) : null;
+    if (e.order === "amove" && e.ammo <= 0) {
+      // nothing left to fight with: rearm first
+      e.order = "idle";
+      e.air = "returning";
+    } else if (t) {
+      e.order = "attack";
+      e.target = t.id;
+      e.autoTarget = true;
+    } else if (flyToward(e, e.tx, e.ty, sp)) {
+      // jets can't loiter: once there, head back to the airfield
+      e.order = "idle";
+      e.air = "returning";
+    }
+  } else if (e.order === "idle" && (w.tick + e.id) % 40 === 0) {
+    // stranded in the air (airfield lost, then rebuilt): keep trying to land
     e.air = "returning";
   }
   clampPos();

@@ -1,5 +1,6 @@
 // Dev page: renders every procedural model for visual inspection (/gallery).
 import { RULES } from "../sim/rules";
+import { THEMES } from "../sim/map";
 import { infantrySprite, structSprite, structTurret, vehicleBody, vehicleTurret, getUnitModel, getStructModel, treeSprite, rockSprite, oreSprite } from "./render/sprites";
 import { HW, HH, ZH } from "./render/iso";
 import { drawSprite, type Sprite } from "./render/model3d";
@@ -92,16 +93,19 @@ for (const r of Object.values(RULES).filter((r) => r.kind === "bld")) {
   );
 }
 const r4 = section("Props & ore");
-r4.appendChild(
-  cell("trees", 12 * 34, 60, (g) => {
-    for (let i = 0; i < 12; i++) drawSprite(g, treeSprite(i), 18 + i * 34, 48);
-  }),
-);
-r4.appendChild(
-  cell("rocks", 8 * 64, 60, (g) => {
-    for (let i = 0; i < 8; i++) drawSprite(g, rockSprite(i), 32 + i * 64, 20);
-  }),
-);
+for (const { id, name } of THEMES) {
+  r4.appendChild(
+    cell(`${name} trees (last 4 by water)`, 16 * 34, 70, (g) => {
+      for (let i = 0; i < 12; i++) drawSprite(g, treeSprite(i, id), 18 + i * 34, 58);
+      for (let i = 0; i < 4; i++) drawSprite(g, treeSprite(i, id, true), 18 + (12 + i) * 34, 58);
+    }),
+  );
+  r4.appendChild(
+    cell(`${name} rocks`, 8 * 64, 60, (g) => {
+      for (let i = 0; i < 8; i++) drawSprite(g, rockSprite(i, id), 32 + i * 64, 20);
+    }),
+  );
+}
 r4.appendChild(
   cell("ore / gems", 8 * 64, 50, (g) => {
     for (let i = 0; i < 4; i++) drawSprite(g, oreSprite(false, i + 1, i), 32 + i * 64, 10);

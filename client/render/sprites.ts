@@ -2,6 +2,7 @@
 import { renderModel, type Sprite } from "./model3d";
 import { infantryModel, oreModel, rockModel, structModel, treeModel, unitModel, type StructModel, type UnitModel } from "./models";
 import { PLAYER_COLORS } from "../../shared/protocol";
+import type { Theme } from "../../sim/map";
 
 export const NEUTRAL_COLOR = "#9d9a90";
 export let SPRITE_SCALE = Math.min(2, Math.max(1, Math.round(window.devicePixelRatio || 1)));
@@ -80,17 +81,17 @@ export function structTurret(type: string, f32: number, team: string): Sprite | 
   return s;
 }
 
-export function treeSprite(v: number): Sprite {
-  const k = `tr:${v % 12}`;
+export function treeSprite(v: number, theme: Theme = "temperate", wet = false): Sprite {
+  const k = `tr:${theme}:${v % 12}:${wet ? 1 : 0}`;
   let s = cache.get(k);
-  if (!s) cache.set(k, (s = renderModel(treeModel(v % 12), { team: "#3a7d33", scale: SPRITE_SCALE })));
+  if (!s) cache.set(k, (s = renderModel(treeModel(v % 12, theme, wet), { team: "#3a7d33", scale: SPRITE_SCALE })));
   return s;
 }
 
-export function rockSprite(v: number): Sprite {
-  const k = `rk:${v % 8}`;
+export function rockSprite(v: number, theme: Theme = "temperate"): Sprite {
+  const k = `rk:${theme}:${v % 8}`;
   let s = cache.get(k);
-  if (!s) cache.set(k, (s = renderModel(rockModel(v % 8), { team: "#888", scale: SPRITE_SCALE })));
+  if (!s) cache.set(k, (s = renderModel(rockModel(v % 8, theme), { team: "#888", scale: SPRITE_SCALE })));
   return s;
 }
 

@@ -3,6 +3,8 @@
 // Structures: footprint spans [0,w]×[0,h] with origin at the footprint's top corner.
 import { Model, type Col } from "./model3d";
 import { PAD_SPOTS } from "../../sim/rules";
+import type { Theme } from "../../sim/map";
+import { animalModel, extStructModel, extUnitModel } from "./models_ext";
 
 // palette
 const CW = "#d6dbe1",
@@ -242,9 +244,9 @@ interface Kit {
   pants: Col;
   helmet: Col;
   skin?: Col;
-  gun: "rifle" | "smg" | "rocket" | "sniper" | "flak" | "arc" | "chain" | "tool" | "none";
+  gun: "rifle" | "smg" | "rocket" | "sniper" | "flak" | "arc" | "chain" | "tool" | "harpoon" | "sonic" | "lance" | "none";
   bulk?: number;
-  hat?: "helmet" | "cap" | "fur" | "hard" | "visor";
+  hat?: "helmet" | "cap" | "fur" | "hard" | "visor" | "bandana";
   pack?: Col;
 }
 
@@ -257,6 +259,10 @@ const KITS: Record<string, Kit> = {
   d_flak: { uniform: "team", pants: "#4f4a3a", helmet: "#4d5040", gun: "flak", pack: DI },
   d_arc: { uniform: "team", pants: "#3c3e38", helmet: "#3c3e38", gun: "arc", bulk: 1.18, hat: "visor", pack: COPPER },
   d_jugg: { uniform: "team", pants: "#3a3b36", helmet: "#55574e", gun: "chain", bulk: 1.35, hat: "visor", pack: DD },
+  s_raider: { uniform: "team", pants: "#4a4638", helmet: "#8f5634", gun: "smg", hat: "bandana" },
+  s_harpoon: { uniform: "team", pants: "#3f4440", helmet: "#56625c", gun: "harpoon", bulk: 1.08, pack: "#b8924a" },
+  s_screamer: { uniform: "team", pants: "#2f3833", helmet: "#2f3833", gun: "sonic", bulk: 1.12, hat: "visor", pack: "#56625c" },
+  s_siren: { uniform: "#1f3a3a", pants: "#1a2e2e", helmet: "team", gun: "lance", hat: "visor", skin: "#c99a74" },
 };
 
 export const INF_FRAMES = 7; // 0 stand, 1-4 walk, 5 fire, 6 deployed
@@ -300,6 +306,10 @@ function soldier(k: Kit, frame: number): Model {
       break;
     case "cap":
       m.box(0, 0, hz, 0.07, 0.07, 0.025, k.helmet);
+      break;
+    case "bandana":
+      m.box(0, 0, hz - 0.005, 0.068, 0.068, 0.025, k.helmet);
+      m.box(-0.045, 0.012, hz - 0.03, 0.03, 0.012, 0.04, k.helmet);
   }
   // arms + weapon
   const az = tz + 0.1;
@@ -337,6 +347,25 @@ function soldier(k: Kit, frame: number): Model {
       m.box(0.05, 0.07 * s, az, 0.09, 0.05, 0.05, k.uniform);
       m.box(0.08, -0.06 * s, az - 0.01, 0.12, 0.06, 0.06, DD);
       m.tube(0.14, -0.06 * s, az + 0.02, 1, 0, 0, 0.14, 0.025, "#2f3034", 6);
+      break;
+    case "harpoon":
+      m.box(0.04, 0.07 * s, az, 0.08, 0.035, 0.035, k.uniform);
+      m.box(0.05, -0.07 * s, az, 0.08, 0.035, 0.035, k.uniform);
+      m.tube(-0.08, -0.03, tz + 0.12, 1, 0, 0.05, 0.3, 0.022, "#56625c", 6);
+      m.tube(0.22 + aim, -0.03, tz + 0.135, 1, 0, 0.05, 0.06, 0.016, "#c9c2b2", 5, 0.002);
+      m.box(0.2 + aim, -0.03, tz + 0.135, 0.012, 0.05, 0.012, "#c9c2b2");
+      break;
+    case "sonic":
+      m.box(0.05, 0.075 * s, az, 0.09, 0.04, 0.04, k.uniform);
+      m.box(0.05, -0.075 * s, az, 0.09, 0.04, 0.04, k.uniform);
+      m.tube(0.06, 0, az + 0.02, 1, 0, 0, 0.1, 0.03, "#2f3833", 8, 0.06);
+      m.tube(0.16, 0, az + 0.02, 1, 0, 0, 0.012, 0.055, "!#7dffcf", 10);
+      break;
+    case "lance":
+      m.box(0.05, 0.065, az, 0.09, 0.035, 0.035, k.uniform);
+      m.box(0.06, -0.065, az, 0.08, 0.035, 0.035, k.uniform);
+      m.tube(-0.06, -0.02, az + 0.02, 1, 0, 0.02, 0.32 + aim, 0.014, "#b8924a", 5);
+      m.sphere(0.27 + aim, -0.02, az + 0.026, 0.026, "!#7dffcf", 6, 4);
       break;
     case "tool":
       m.box(0.03, 0.065, az - 0.02, 0.06, 0.035, 0.035, k.uniform);
@@ -378,6 +407,8 @@ function hound(frame: number): Model {
 
 export function infantryModel(type: string, frame: number): Model {
   if (type === "hound") return hound(frame);
+  const beast = animalModel(type, frame);
+  if (beast) return beast;
   return soldier(KITS[type] ?? KITS.c_trooper, frame);
 }
 
@@ -824,6 +855,8 @@ const structBuilders: Record<string, () => StructModel> = {
 export function unitModel(type: string): UnitModel {
   const b = unitBuilders[type];
   if (b) return b();
+  const ext = extUnitModel(type);
+  if (ext) return ext;
   // fallback box
   const m = new Model().box(0, 0, 0, 0.5, 0.3, 0.2, "team");
   return { body: m, tip: [0.25, 0, 0.1], shadow: [0.3, 0.2] };
@@ -832,45 +865,140 @@ export function unitModel(type: string): UnitModel {
 export function structModel(type: string): StructModel {
   const b = structBuilders[type];
   if (b) return b();
+  const ext = extStructModel(type);
+  if (ext) return ext;
   return { body: new Model().box(0.5, 0.5, 0, 0.9, 0.9, 0.4, "team"), height: 0.4 };
 }
 
 // ───────────────────────────── props ─────────────────────────────
 
-export function treeModel(v: number): Model {
+const TRUNK = "#5a3d22";
+
+/** scenery tree for a biome; `wet` trees stand beside water (desert palms) */
+export function treeModel(v: number, theme: Theme = "temperate", wet = false): Model {
   const m = new Model();
+  const ox = ((v * 37) % 20) / 100 - 0.1,
+    oy = ((v * 53) % 20) / 100 - 0.1;
+  switch (theme) {
+    case "snow": {
+      // snow-laden pine: dark tiers, each capped white
+      const h = 0.9 + (v % 4) * 0.08;
+      m.cyl(ox, oy, 0, 0.035, 0.12, TRUNK, 6);
+      for (let k = 0; k < 3; k++) {
+        const z = 0.08 + k * 0.15 * h,
+          r = (0.24 - k * 0.06) * h;
+        m.cyl(ox, oy, z, r, 0.2 * h, k % 2 ? "#2c5a40" : "#24503a", 8, 0);
+        m.cyl(ox, oy, z + 0.09 * h, r * 0.62, 0.11 * h, "#eef4f8", 8, 0);
+      }
+      if (v % 5 === 0) m.cyl(ox + 0.16, oy + 0.08, 0, 0.1, 0.05, "#e8eef4", 8, 0.06);
+      return m;
+    }
+    case "tundra": {
+      if (v % 4 === 3) {
+        // dead birch: pale bare trunk and a few twigs
+        m.cyl(ox, oy, 0, 0.03, 0.42, "#d8d2c4", 6, 0.02);
+        m.tube(ox, oy, 0.28, 0.8, 0.3, 0.6, 0.16, 0.012, "#c9c2b2", 4);
+        m.tube(ox, oy, 0.2, -0.7, -0.4, 0.6, 0.13, 0.012, "#c9c2b2", 4);
+        return m;
+      }
+      // stunted spruce
+      const h = 0.75 + (v % 3) * 0.1;
+      m.cyl(ox, oy, 0, 0.03, 0.1, TRUNK, 6);
+      m.cyl(ox, oy, 0.06, 0.16 * h, 0.3 * h, "#2f4a32", 7, 0);
+      m.cyl(ox, oy, 0.2 * h, 0.11 * h, 0.3 * h, "#3a5a3a", 7, 0);
+      return m;
+    }
+    case "desert": {
+      if (wet || v % 5 === 0) {
+        // date palm: curved ringed trunk and a crown of fronds
+        const lean = ((v % 3) - 1) * 0.05;
+        m.path3([[ox, oy, 0], [ox + lean, oy, 0.25], [ox + lean * 2.5, oy + 0.02, 0.5]], 0.03, "#8a6a42", 6);
+        const tx = ox + lean * 2.5,
+          ty = oy + 0.02;
+        for (let k = 0; k < 7; k++) {
+          const a = (k / 7) * Math.PI * 2 + v;
+          m.tube(tx, ty, 0.5, Math.cos(a), Math.sin(a), -0.35, 0.24, 0.035, k % 2 ? "#4f8a34" : "#3f7a2c", 4, 0.006);
+        }
+        m.sphere(tx, ty, 0.5, 0.04, "#6a4a2a", 6, 4);
+        return m;
+      }
+      if (v % 3 === 0) {
+        // saguaro cactus with arms
+        m.cyl(ox, oy, 0, 0.05, 0.42, "#4f7d3c", 8, 0.045);
+        m.sphere(ox, oy, 0.42, 0.045, "#4f7d3c", 8, 4);
+        m.path3([[ox, oy, 0.18], [ox + 0.12, oy, 0.2], [ox + 0.12, oy, 0.32]], 0.032, "#58883f", 6);
+        m.path3([[ox, oy, 0.24], [ox - 0.1, oy + 0.03, 0.26], [ox - 0.1, oy + 0.03, 0.36]], 0.03, "#58883f", 6);
+        return m;
+      }
+      // dry scrub bush
+      for (let k = 0; k < 4; k++) m.sphere(ox + ((k * 0.07) % 0.14) - 0.06, oy + ((k * 0.11) % 0.12) - 0.05, 0.04, 0.07, k % 2 ? "#8a8a4a" : "#7a6e3c", 6, 4);
+      return m;
+    }
+    case "safari": {
+      if (v % 4 === 1) {
+        // baobab: swollen trunk, stubby crown
+        m.cyl(ox, oy, 0, 0.11, 0.34, "#8a7462", 9, 0.08);
+        for (let k = 0; k < 5; k++) {
+          const a = (k / 5) * Math.PI * 2;
+          m.tube(ox, oy, 0.32, Math.cos(a), Math.sin(a), 0.5, 0.12, 0.022, "#8a7462", 5);
+          m.sphere(ox + Math.cos(a) * 0.1, oy + Math.sin(a) * 0.1, 0.41, 0.06, "#5e7a34", 6, 4);
+        }
+        return m;
+      }
+      if (v % 4 === 3) {
+        // thorn bush
+        for (let k = 0; k < 3; k++) m.sphere(ox + k * 0.06 - 0.06, oy + ((k * 7) % 3) * 0.03 - 0.03, 0.05, 0.09, k % 2 ? "#6a7a38" : "#7d8a40", 7, 4);
+        return m;
+      }
+      // umbrella acacia: thin forked trunk under a wide flat canopy
+      m.path3([[ox, oy, 0], [ox + 0.02, oy, 0.22], [ox + 0.1, oy + 0.03, 0.4]], 0.022, "#6a5038", 5);
+      m.path3([[ox + 0.02, oy, 0.22], [ox - 0.08, oy - 0.02, 0.38]], 0.018, "#6a5038", 5);
+      m.cyl(ox + 0.01, oy, 0.38, 0.3, 0.05, "#5f7a30", 10, 0.26);
+      m.cyl(ox + 0.01, oy, 0.43, 0.24, 0.03, "#6f8a38", 10, 0.18);
+      return m;
+    }
+  }
   const greens = ["#2f6b2a", "#3a7d33", "#4a8a3a", "#2d5f34", "#56913d"];
   const g1 = greens[v % greens.length],
     g2 = greens[(v + 2) % greens.length];
-  const ox = ((v * 37) % 20) / 100 - 0.1,
-    oy = ((v * 53) % 20) / 100 - 0.1;
   if (v % 3 === 0) {
-    m.cyl(ox, oy, 0, 0.035, 0.14, "#5a3d22", 6);
+    m.cyl(ox, oy, 0, 0.035, 0.14, TRUNK, 6);
     m.cyl(ox, oy, 0.1, 0.22, 0.3, g1, 8, 0);
     m.cyl(ox, oy, 0.28, 0.16, 0.28, g2, 8, 0);
   } else if (v % 3 === 1) {
-    m.cyl(ox, oy, 0, 0.04, 0.2, "#5a3d22", 6);
+    m.cyl(ox, oy, 0, 0.04, 0.2, TRUNK, 6);
     m.sphere(ox, oy, 0.36, 0.2, g1, 8, 5);
     m.sphere(ox + 0.1, oy - 0.05, 0.3, 0.13, g2, 7, 4);
   } else {
-    m.cyl(ox, oy, 0, 0.03, 0.12, "#5a3d22", 6);
+    m.cyl(ox, oy, 0, 0.03, 0.12, TRUNK, 6);
     m.cyl(ox, oy, 0.08, 0.17, 0.42, g1, 7, 0);
-    m.cyl(ox + 0.18, oy + 0.1, 0, 0.025, 0.1, "#5a3d22", 5);
+    m.cyl(ox + 0.18, oy + 0.1, 0, 0.025, 0.1, TRUNK, 5);
     m.cyl(ox + 0.18, oy + 0.1, 0.06, 0.12, 0.28, g2, 7, 0);
   }
   return m;
 }
 
-export function rockModel(v: number): Model {
+const ROCK_COLS: Record<Theme, string[]> = {
+  temperate: ["#8b8a83", "#7a7973", "#96948b"],
+  snow: ["#868a94", "#767a84", "#9498a2"],
+  tundra: ["#7e7c74", "#6e6c66", "#8c8a80"],
+  desert: ["#b0704a", "#9a5e3c", "#c08058"],
+  safari: ["#9a8470", "#86705e", "#a8927c"],
+};
+
+export function rockModel(v: number, theme: Theme = "temperate"): Model {
   const m = new Model();
-  const cols = ["#8b8a83", "#7a7973", "#96948b"];
+  const cols = ROCK_COLS[theme];
   const n = 2 + (v % 3);
   for (let i = 0; i < n; i++) {
     const a = (i * 2.3 + v) % 6.28;
     const r = 0.12 + ((v + i * 7) % 5) * 0.02;
     m.boxR(0.5 + Math.cos(a) * 0.18, 0.5 + Math.sin(a) * 0.18, 0, r * 2, r * 1.6, r * (1.2 + ((v + i) % 3) * 0.3), a, cols[(v + i) % 3]);
   }
-  m.taper(0.5, 0.5, 0, 0.6, 0.55, 0.32 + (v % 4) * 0.04, 0.3, 0.28, cols[v % 3], "#a3a198");
+  const top = theme === "snow" ? "#eef3f7" : theme === "desert" ? "#c98d62" : "#a3a198";
+  const h = 0.32 + (v % 4) * 0.04 + (theme === "desert" ? 0.12 : 0);
+  m.taper(0.5, 0.5, 0, 0.6, 0.55, h, theme === "desert" ? 0.48 : 0.3, theme === "desert" ? 0.44 : 0.28, cols[v % 3], top);
+  if (theme === "snow") m.taper(0.5, 0.5, h, 0.3, 0.28, 0.04, 0.2, 0.18, "#f2f6fa");
   return m;
 }
 

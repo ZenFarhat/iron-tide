@@ -5,11 +5,15 @@
 
 import { LEP } from "./fixed";
 
-export type Faction = "C" | "D"; // Concord, Dominion
+export type Faction = "C" | "D" | "S"; // Concord, Dominion, Syndicate
 export const FACTIONS: { id: Faction; name: string; blurb: string }[] = [
   { id: "C", name: "Concord", blurb: "High-tech coalition. Light beams, air power, mobility." },
   { id: "D", name: "Dominion", blurb: "Iron industrial bloc. Heavy armor, arc weapons, rockets." },
+  { id: "S", name: "Syndicate", blurb: "Mercenary hover-fleets. Hovercraft cross water, sonic weapons, salvage bounties on every kill." },
 ];
+export function factionName(f: Faction) {
+  return FACTIONS.find((x) => x.id === f)?.name ?? f;
+}
 
 export const ARMORS = ["none", "flak", "plate", "light", "medium", "heavy", "wood", "steel", "concrete", "air"] as const;
 export type Armor = (typeof ARMORS)[number];
@@ -39,11 +43,13 @@ export const WARHEADS: Record<string, Warhead> = {
   nuke: { verses: A([100, 100, 100, 100, 100, 100, 100, 100, 100, 60]), spread: 1400, falloff: 15, infDeath: "melt" },
   storm: { verses: A([100, 100, 100, 90, 90, 90, 100, 100, 100, 100]), spread: 320, falloff: 30, infDeath: "zap" },
   rad: { verses: A([100, 100, 70, 0, 0, 0, 0, 0, 0, 0]), infDeath: "melt" },
+  sonic: { verses: A([100, 90, 70, 70, 55, 40, 110, 90, 70, 0]), spread: 64, falloff: 40, infDeath: "explode" },
+  maul: { verses: A([100, 90, 70, 30, 15, 5, 20, 5, 0, 0]), infDeath: "shot" },
   blast: { verses: A([100, 100, 100, 100, 100, 100, 100, 100, 100, 0]), spread: 1024, falloff: 20, infDeath: "explode" },
 };
 
 export type ProjKind = "instant" | "shell" | "missile" | "beam" | "arc" | "artillery" | "bomb" | "charge";
-export type Fx = "mg" | "rifle" | "cannon" | "rocket" | "beam" | "arc" | "flak" | "snipe" | "bite" | "bomb" | "artillery" | "charge" | "none";
+export type Fx = "mg" | "rifle" | "cannon" | "rocket" | "beam" | "arc" | "flak" | "snipe" | "bite" | "bomb" | "artillery" | "charge" | "sonic" | "harpoon" | "none";
 
 export interface Weapon {
   id: string;
@@ -104,13 +110,57 @@ export const WEAPONS: Record<string, Weapon> = Object.fromEntries(
     W("flakBattery", { damage: 40, rof: 15, range: c(11), warhead: "flak", proj: "instant", air: true, ground: false, fx: "flak" }),
     W("spireBeam", { damage: 100, rof: 80, range: c(8), warhead: "lens", proj: "beam", fx: "beam" }),
     W("coilZap", { damage: 220, rof: 60, range: c(7.5), warhead: "arc", proj: "arc", fx: "arc" }),
+    // syndicate
+    W("raiderSMG", { damage: 13, rof: 14, range: c(5), warhead: "bullet", proj: "instant", air: true, fx: "rifle" }),
+    W("harpoonGun", { damage: 55, rof: 45, range: c(6), warhead: "ap", proj: "shell", speed: 90, fx: "harpoon" }),
+    W("sonicBlast", { damage: 40, rof: 28, range: c(4), warhead: "sonic", proj: "instant", fx: "sonic" }),
+    W("sirenLance", { damage: 90, rof: 26, range: c(7), warhead: "sonic", proj: "instant", fx: "sonic" }),
+    W("skiffGuns", { damage: 12, rof: 6, range: c(5.5), warhead: "hollow", proj: "instant", air: true, fx: "mg" }),
+    W("corsairCannon", { damage: 70, rof: 30, range: c(6), warhead: "ap", proj: "shell", speed: 140, fx: "cannon" }),
+    W("howlerWave", { damage: 150, rof: 110, range: c(10), minRange: c(3), warhead: "sonic", proj: "artillery", speed: 45, fx: "artillery" }),
+    W("leviathanGun", { damage: 85, rof: 40, range: c(6.5), warhead: "ap", proj: "shell", speed: 120, burst: 2, burstDelay: 6, fx: "cannon" }),
+    W("leviathanFlak", { damage: 35, rof: 14, range: c(8), warhead: "flak", proj: "instant", air: true, ground: false, fx: "flak" }),
+    W("gunNestMG", { damage: 18, rof: 6, range: c(6), warhead: "hollow", proj: "instant", fx: "mg" }),
+    W("flakNest", { damage: 38, rof: 16, range: c(10.5), warhead: "flak", proj: "instant", air: true, ground: false, fx: "flak" }),
+    W("pylonPulse", { damage: 120, rof: 50, range: c(7), warhead: "sonic", proj: "instant", fx: "sonic" }),
+    // naval
+    W("cutterGun", { damage: 14, rof: 7, range: c(5.5), warhead: "hollow", proj: "instant", air: true, fx: "mg" }),
+    W("cutterAA", { damage: 40, rof: 35, range: c(9), warhead: "flak", proj: "missile", speed: 130, burst: 2, burstDelay: 5, air: true, ground: false, fx: "rocket" }),
+    W("frigateBeam", { damage: 110, rof: 55, range: c(8), warhead: "lens", proj: "beam", fx: "beam" }),
+    W("cruiserBeam", { damage: 170, rof: 90, range: c(12), warhead: "lens", proj: "beam", fx: "beam" }),
+    W("gunboatMG", { damage: 14, rof: 7, range: c(5.5), warhead: "hollow", proj: "instant", fx: "mg" }),
+    W("gunboatFlak", { damage: 32, rof: 12, range: c(8.5), warhead: "flak", proj: "instant", air: true, ground: false, fx: "flak" }),
+    W("monitorGun", { damage: 100, rof: 40, range: c(7), warhead: "ap", proj: "shell", speed: 110, burst: 2, burstDelay: 5, fx: "cannon" }),
+    W("bargeRocket", { damage: 220, rof: 180, range: c(18), minRange: c(5), warhead: "he", proj: "artillery", speed: 50, fx: "artillery" }),
+    W("runnerHarpoon", { damage: 60, rof: 35, range: c(6.5), warhead: "ap", proj: "shell", speed: 100, burst: 2, burstDelay: 6, fx: "harpoon" }),
+    W("galleonSonic", { damage: 180, rof: 100, range: c(11), minRange: c(3), warhead: "sonic", proj: "artillery", speed: 45, fx: "artillery" }),
+    W("barrageShell", { damage: 180, rof: 1, range: c(1), warhead: "he", proj: "bomb", speed: 30, fx: "artillery" }),
+    // wildlife
+    W("lionBite", { damage: 40, rof: 18, range: c(1.25), warhead: "maul", proj: "instant", fx: "bite" }),
+    W("bearMaul", { damage: 60, rof: 22, range: c(1.25), warhead: "maul", proj: "instant", fx: "bite" }),
+    W("wolfBite", { damage: 25, rof: 15, range: c(1.2), warhead: "maul", proj: "instant", fx: "bite" }),
+    W("jackalBite", { damage: 18, rof: 14, range: c(1.2), warhead: "maul", proj: "instant", fx: "bite" }),
+    W("stomp", { damage: 70, rof: 30, range: c(1.4), warhead: "maul", proj: "instant", fx: "bite" }),
+    W("gore", { damage: 55, rof: 30, range: c(1.25), warhead: "maul", proj: "instant", fx: "bite" }),
   ].map((w) => [w.id, w]),
 );
 
 export type Kind = "inf" | "veh" | "air" | "bld";
-export type Queue = "bld" | "def" | "inf" | "veh" | "air";
-export const QUEUES: Queue[] = ["bld", "def", "inf", "veh", "air"];
-export const QUEUE_PRODUCER: Record<Queue, string> = { bld: "hub", def: "hub", inf: "barracks", veh: "factory", air: "aircmd" };
+export type Queue = "bld" | "def" | "inf" | "veh" | "air" | "sea";
+export const QUEUES: Queue[] = ["bld", "def", "inf", "veh", "air", "sea"];
+export const QUEUE_PRODUCER: Record<Queue, string> = { bld: "hub", def: "hub", inf: "barracks", veh: "factory", air: "aircmd", sea: "shipyard" };
+
+/** how a unit gets around: hover craft cross land and water, ships stay on water */
+export type Loco = "foot" | "track" | "hover" | "naval" | "air";
+export function locoOf(r: Rule): Loco {
+  return r.loco ?? (r.kind === "inf" ? "foot" : r.kind === "air" ? "air" : "track");
+}
+
+/** wildlife behaviour: grazers wander in herds and flee, big grazers stand their ground, predators hunt infantry */
+export interface Animal {
+  diet: "grazer" | "predator";
+  big?: boolean; // fights back when attacked instead of fleeing
+}
 /** landing-pad centres (cells, from the footprint corner) for slots 0–3; the airfield model draws its pads here */
 export const PAD_SPOTS: [number, number][] = [
   [1.2, 1.2],
@@ -172,6 +222,9 @@ export interface Rule {
   support?: boolean; // lumen spire beam support
   chargeable?: boolean; // arc coil
   repairBay?: boolean;
+  loco?: Loco;
+  naval?: boolean; // structure built on water (shipyards)
+  animal?: Animal;
 }
 
 const base: Omit<Rule, "id" | "name" | "desc" | "faction" | "kind" | "cost" | "hp" | "armor"> = {
@@ -255,6 +308,56 @@ export const RULES: Record<string, Rule> = Object.fromEntries(
     U("d_silo", { name: "Annihilator Silo", desc: "Superweapon: launches a city-killing warhead.", faction: "D", kind: "bld", queue: "def", cost: 5000, hp: 1000, armor: "concrete", w: 3, h: 3, power: -200, prereq: ["lab"], superweapon: "nuke", tags: ["superweapon"] }),
     U("d_bulwark", { name: "Bulwark Projector", desc: "Superweapon: renders vehicles and structures invulnerable. Infantry do not survive.", faction: "D", kind: "bld", queue: "def", cost: 2500, hp: 1000, armor: "concrete", w: 3, h: 3, power: -200, prereq: ["lab"], superweapon: "bulwark", tags: ["superweapon"] }),
 
+    // ───────────── Syndicate ─────────────
+    U("s_raider", { name: "Raider", desc: "Cheap, quick mercenary with a submachine gun that also fires at aircraft.", faction: "S", kind: "inf", queue: "inf", cost: 150, hp: 110, armor: "none", speed: 15, sight: 5, prereq: ["barracks"], wGround: "raiderSMG", wAir: "raiderSMG" }),
+    U("s_harpoon", { name: "Harpooner", desc: "Fires barbed harpoons that punch through vehicle and ship armor.", faction: "S", kind: "inf", queue: "inf", cost: 350, hp: 130, armor: "flak", speed: 12, sight: 6, prereq: ["barracks"], wGround: "harpoonGun" }),
+    U("s_screamer", { name: "Screamer", desc: "Sonic emitter. Short-range shockwaves shatter infantry and buildings.", faction: "S", kind: "inf", queue: "inf", cost: 450, hp: 140, armor: "flak", speed: 11, sight: 5, prereq: ["barracks", "radar"], wGround: "sonicBlast", uncrushable: true }),
+    U("s_siren", { name: "Siren", desc: "Amphibious elite operative with a sonic lance; swims across water and demolishes structures with charges. Limit 1.", faction: "S", kind: "inf", queue: "inf", cost: 1000, hp: 150, armor: "flak", speed: 15, sight: 8, prereq: ["barracks", "lab"], wGround: "sirenLance", hero: true, uncrushable: true, loco: "hover" }),
+    U("s_skiff", { name: "Skiff", desc: "Fast hover scout with twin machine guns that also hit aircraft. Crosses water.", faction: "S", kind: "veh", queue: "veh", cost: 500, hp: 180, armor: "light", speed: 38, rot: 10, sight: 8, prereq: ["factory"], wGround: "skiffGuns", wAir: "skiffGuns", turret: true, turretRot: 12, loco: "hover" }),
+    U("s_corsair", { name: "Corsair Hovertank", desc: "Main battle hovercraft with a high-velocity cannon. Crosses water.", faction: "S", kind: "veh", queue: "veh", cost: 850, hp: 320, armor: "medium", speed: 28, rot: 6, sight: 6, prereq: ["factory"], wGround: "corsairCannon", turret: true, turretRot: 8, loco: "hover" }),
+    U("s_howler", { name: "Howler", desc: "Hover artillery that lobs sonic charges across the battlefield. Crosses water.", faction: "S", kind: "veh", queue: "veh", cost: 900, hp: 160, armor: "light", speed: 22, rot: 5, sight: 8, prereq: ["factory", "radar"], wGround: "howlerWave", loco: "hover" }),
+    U("s_leviathan", { name: "Leviathan", desc: "Heavy hover fortress: twin cannons and flak turrets. Crosses water.", faction: "S", kind: "veh", queue: "veh", cost: 1800, hp: 900, armor: "heavy", speed: 16, rot: 3, sight: 7, prereq: ["factory", "lab"], wGround: "leviathanGun", wAir: "leviathanFlak", turret: true, turretRot: 5, loco: "hover" }),
+    U("s_harv", { name: "Salvage Skimmer", desc: "Hover ore collector. Skims across water to reach distant fields.", faction: "S", kind: "veh", queue: "veh", cost: 1400, hp: 600, armor: "heavy", speed: 24, rot: 5, sight: 4, prereq: ["factory", "refinery"], harvester: { capacity: 28, teleport: false }, loco: "hover" }),
+    U("s_hub", { name: "Command Hub", desc: "Builds structures. Can pack up into a Mobile Hub.", faction: "S", kind: "bld", cost: 3000, hp: 1500, armor: "steel", sight: 7, w: 3, h: 3, tags: ["hub"], undeploy: "mhv" }),
+    U("s_power", { name: "Tidal Turbine", desc: "Provides 175 power.", faction: "S", kind: "bld", queue: "bld", cost: 700, hp: 750, armor: "steel", w: 2, h: 2, power: 175, tags: ["power"] }),
+    U("s_barracks", { name: "Mercenary Den", desc: "Trains infantry.", faction: "S", kind: "bld", queue: "bld", cost: 500, hp: 800, armor: "wood", w: 2, h: 2, power: -10, prereq: ["power"], tags: ["barracks"] }),
+    U("s_refinery", { name: "Ore Refinery", desc: "Processes ore into credits. Comes with a Salvage Skimmer.", faction: "S", kind: "bld", queue: "bld", cost: 2000, hp: 900, armor: "steel", w: 3, h: 3, power: -50, prereq: ["power"], tags: ["refinery"], freeUnit: "s_harv" }),
+    U("s_factory", { name: "Hover Works", desc: "Builds hovercraft.", faction: "S", kind: "bld", queue: "bld", cost: 2000, hp: 1000, armor: "steel", w: 3, h: 3, power: -25, prereq: ["barracks", "refinery"], tags: ["factory"] }),
+    U("s_radar", { name: "Signal Spire", desc: "Enables the radar minimap.", faction: "S", kind: "bld", queue: "bld", cost: 1000, hp: 900, armor: "steel", sight: 10, w: 2, h: 2, power: -50, prereq: ["refinery"], tags: ["radar"], radar: true }),
+    U("s_depot", { name: "Repair Bay", desc: "Repairs vehicles parked on it. Required for Mobile Hub.", faction: "S", kind: "bld", queue: "bld", cost: 800, hp: 1000, armor: "steel", w: 3, h: 3, power: -25, prereq: ["factory"], tags: ["depot"], repairBay: true }),
+    U("s_lab", { name: "Black Lab", desc: "Unlocks advanced units and superweapons.", faction: "S", kind: "bld", queue: "bld", cost: 2000, hp: 1000, armor: "steel", w: 3, h: 3, power: -100, prereq: ["factory", "radar"], tags: ["lab"] }),
+    U("s_gunnest", { name: "Gun Nest", desc: "Anti-infantry machine-gun emplacement.", faction: "S", kind: "bld", queue: "def", cost: 500, hp: 420, armor: "concrete", sight: 7, prereq: ["barracks"], wGround: "gunNestMG", tags: ["defense"] }),
+    U("s_flaknest", { name: "Flak Nest", desc: "Anti-aircraft flak emplacement.", faction: "S", kind: "bld", queue: "def", cost: 900, hp: 800, armor: "steel", sight: 11, power: -40, prereq: ["radar"], wAir: "flakNest", needsPower: true, tags: ["defense"] }),
+    U("s_pylon", { name: "Sonic Pylon", desc: "Emits crushing sonic pulses that splash across groups of attackers.", faction: "S", kind: "bld", queue: "def", cost: 1400, hp: 650, armor: "steel", sight: 8, power: -70, prereq: ["radar"], wGround: "pylonPulse", needsPower: true, tags: ["defense"] }),
+    U("s_wall", { name: "Barrier Wall", desc: "Blocks movement.", faction: "S", kind: "bld", queue: "def", cost: 100, hp: 300, armor: "concrete", sight: 1, prereq: ["hub"], wall: true, tags: ["wall"] }),
+    U("s_barrage", { name: "Barrage Array", desc: "Superweapon: rains a long artillery barrage over a wide area.", faction: "S", kind: "bld", queue: "def", cost: 4000, hp: 1000, armor: "concrete", w: 3, h: 3, power: -200, prereq: ["lab"], superweapon: "barrage", tags: ["superweapon"] }),
+    U("s_blackout", { name: "Blackout Mast", desc: "Superweapon: an electromagnetic pulse that freezes vehicles, ships and defenses.", faction: "S", kind: "bld", queue: "def", cost: 2500, hp: 1000, armor: "concrete", w: 3, h: 3, power: -150, prereq: ["lab"], superweapon: "blackout", tags: ["superweapon"] }),
+
+    // ───────────── Naval ─────────────
+    U("c_navyard", { name: "Naval Yard", desc: "Builds warships. Must be placed on water.", faction: "C", kind: "bld", queue: "bld", cost: 1500, hp: 1200, armor: "steel", sight: 8, w: 3, h: 3, power: -40, prereq: ["factory"], tags: ["shipyard"], naval: true }),
+    U("c_cutter", { name: "Patrol Cutter", desc: "Fast patrol boat. Machine gun plus anti-aircraft missiles.", faction: "C", kind: "veh", queue: "sea", cost: 600, hp: 260, armor: "light", speed: 34, rot: 8, sight: 8, prereq: ["shipyard"], wGround: "cutterGun", wAir: "cutterAA", turret: true, turretRot: 10, loco: "naval" }),
+    U("c_frigate", { name: "Lens Frigate", desc: "Warship with a focused light beam. Strong against ships and armor.", faction: "C", kind: "veh", queue: "sea", cost: 1100, hp: 520, armor: "medium", speed: 22, rot: 5, sight: 8, prereq: ["shipyard", "radar"], wGround: "frigateBeam", turret: true, turretRot: 6, loco: "naval" }),
+    U("c_cruiser", { name: "Sunlance Cruiser", desc: "Capital ship. Its long-range beam lance bombards targets far inland.", faction: "C", kind: "veh", queue: "sea", cost: 2000, hp: 900, armor: "heavy", speed: 16, rot: 3, sight: 9, prereq: ["shipyard", "lab"], wGround: "cruiserBeam", turret: true, turretRot: 4, loco: "naval" }),
+    U("d_navyard", { name: "Naval Dock", desc: "Builds warships. Must be placed on water.", faction: "D", kind: "bld", queue: "bld", cost: 1500, hp: 1300, armor: "steel", sight: 8, w: 3, h: 3, power: -40, prereq: ["factory"], tags: ["shipyard"], naval: true }),
+    U("d_gunboat", { name: "Flak Gunboat", desc: "Armed river boat: flak cannon against aircraft, machine gun against infantry.", faction: "D", kind: "veh", queue: "sea", cost: 600, hp: 300, armor: "light", speed: 30, rot: 7, sight: 8, prereq: ["shipyard"], wGround: "gunboatMG", wAir: "gunboatFlak", turret: true, turretRot: 10, loco: "naval" }),
+    U("d_monitor", { name: "River Monitor", desc: "Heavily armored gun ship with twin cannons.", faction: "D", kind: "veh", queue: "sea", cost: 1200, hp: 750, armor: "heavy", speed: 18, rot: 4, sight: 7, prereq: ["shipyard", "radar"], wGround: "monitorGun", turret: true, turretRot: 5, loco: "naval" }),
+    U("d_barge", { name: "Rocket Barge", desc: "Floating artillery that shells structures far from the shore.", faction: "D", kind: "veh", queue: "sea", cost: 1500, hp: 450, armor: "medium", speed: 14, rot: 3, sight: 9, prereq: ["shipyard", "lab"], wGround: "bargeRocket", loco: "naval" }),
+    U("s_navyard", { name: "Dockyard", desc: "Builds warships. Must be placed on water.", faction: "S", kind: "bld", queue: "bld", cost: 1500, hp: 1200, armor: "steel", sight: 8, w: 3, h: 3, power: -40, prereq: ["factory"], tags: ["shipyard"], naval: true }),
+    U("s_runner", { name: "Blockade Runner", desc: "Fast attack boat firing paired harpoons. Hunts ships and vehicles.", faction: "S", kind: "veh", queue: "sea", cost: 700, hp: 320, armor: "light", speed: 36, rot: 8, sight: 8, prereq: ["shipyard"], wGround: "runnerHarpoon", turret: true, turretRot: 10, loco: "naval" }),
+    U("s_galleon", { name: "Sonic Galleon", desc: "Long-range sonic artillery ship.", faction: "S", kind: "veh", queue: "sea", cost: 1600, hp: 600, armor: "medium", speed: 15, rot: 3, sight: 9, prereq: ["shipyard", "lab"], wGround: "galleonSonic", loco: "naval" }),
+
+    // ───────────── Wildlife ─────────────
+    U("a_zebra", { name: "Zebra", desc: "Skittish grazer. Runs from danger.", faction: "N", kind: "inf", cost: 150, hp: 200, armor: "none", speed: 17, sight: 5, animal: { diet: "grazer" } }),
+    U("a_giraffe", { name: "Giraffe", desc: "Towering grazer. Runs from danger.", faction: "N", kind: "inf", cost: 200, hp: 320, armor: "none", speed: 13, sight: 7, uncrushable: true, animal: { diet: "grazer" } }),
+    U("a_elephant", { name: "Elephant", desc: "Gentle giant — until provoked.", faction: "N", kind: "inf", cost: 400, hp: 750, armor: "plate", speed: 9, sight: 6, uncrushable: true, wGround: "stomp", animal: { diet: "grazer", big: true } }),
+    U("a_lion", { name: "Lion", desc: "Predator. Hunts infantry that strays near its pride.", faction: "N", kind: "inf", cost: 250, hp: 230, armor: "none", speed: 19, sight: 6, wGround: "lionBite", animal: { diet: "predator" } }),
+    U("a_reindeer", { name: "Reindeer", desc: "Herd grazer. Runs from danger.", faction: "N", kind: "inf", cost: 150, hp: 190, armor: "none", speed: 16, sight: 5, animal: { diet: "grazer" } }),
+    U("a_bear", { name: "Polar Bear", desc: "Predator. Mauls infantry that wander onto the ice.", faction: "N", kind: "inf", cost: 350, hp: 480, armor: "flak", speed: 13, sight: 6, uncrushable: true, wGround: "bearMaul", animal: { diet: "predator", big: true } }),
+    U("a_wolf", { name: "Wolf", desc: "Pack predator. Hunts infantry.", faction: "N", kind: "inf", cost: 150, hp: 150, armor: "none", speed: 22, sight: 7, wGround: "wolfBite", animal: { diet: "predator" } }),
+    U("a_muskox", { name: "Musk Ox", desc: "Shaggy herd grazer that charges attackers.", faction: "N", kind: "inf", cost: 300, hp: 520, armor: "plate", speed: 10, sight: 5, uncrushable: true, wGround: "gore", animal: { diet: "grazer", big: true } }),
+    U("a_camel", { name: "Camel", desc: "Hardy desert grazer. Runs from danger.", faction: "N", kind: "inf", cost: 200, hp: 300, armor: "none", speed: 12, sight: 6, uncrushable: true, animal: { diet: "grazer" } }),
+    U("a_jackal", { name: "Jackal", desc: "Scavenging pack predator. Harasses infantry.", faction: "N", kind: "inf", cost: 100, hp: 100, armor: "none", speed: 21, sight: 6, wGround: "jackalBite", animal: { diet: "predator" } }),
+
     // ───────────── Neutral ─────────────
     U("fuelwell", { name: "Fuel Well", desc: "Capture with an Engineer for steady income.", faction: "N", kind: "bld", cost: 1000, hp: 1000, armor: "steel", sight: 4, w: 2, h: 2, tags: ["fuelwell"], income: 25, capturable: true }),
   ].map((r) => [r.id, r]),
@@ -273,6 +376,8 @@ export const SUPERWEAPONS: Record<string, SuperweaponRule> = {
   storm: { id: "storm", name: "Tempest Storm", charge: 20 * 60 * 10, radius: 6 * LEP },
   phase: { id: "phase", name: "Phase Shift", charge: 20 * 60 * 7, radius: Math.round(1.5 * LEP), twoStep: true },
   bulwark: { id: "bulwark", name: "Bulwark Field", charge: 20 * 60 * 5, radius: Math.round(1.5 * LEP) },
+  barrage: { id: "barrage", name: "Siege Barrage", charge: 20 * 60 * 8, radius: 5 * LEP },
+  blackout: { id: "blackout", name: "Blackout Pulse", charge: 20 * 60 * 5, radius: 4 * LEP },
 };
 
 // Economy and misc constants
@@ -289,7 +394,9 @@ export const MULTI_FACTORY_SPEED = [100, 150, 190, 220, 245, 265];
 export const CONSTRUCT_TICKS = 40; // structure build-up animation
 export const SELL_TICKS = 20;
 export const SELL_REFUND_PCT = 50;
-export const SURVIVORS: Record<Faction, string> = { C: "c_trooper", D: "d_levy" };
+export const SURVIVORS: Record<Faction, string> = { C: "c_trooper", D: "d_levy", S: "s_raider" };
+/** share of a destroyed enemy's cost the Syndicate pockets as salvage */
+export const SALVAGE_PCT = { unit: 25, structure: 10 };
 export const VET_COLORS = ["", "veteran", "elite"];
 
 export function buildTicks(cost: number) {
@@ -307,8 +414,11 @@ export function buildablesFor(faction: Faction, queue: Queue): Rule[] {
   return Object.values(RULES).filter((r) => r.queue === queue && (r.faction === faction || r.faction === "*"));
 }
 
-export const FACTION_HUB: Record<Faction, string> = { C: "c_hub", D: "d_hub" };
+export const FACTION_HUB: Record<Faction, string> = { C: "c_hub", D: "d_hub", S: "s_hub" };
+export const FACTION_POWER: Record<Faction, string> = { C: "c_power", D: "d_power", S: "s_power" };
+export const FACTION_HARV: Record<Faction, string> = { C: "c_harv", D: "d_harv", S: "s_harv" };
 export const FACTION_STARTERS: Record<Faction, string[]> = {
   C: ["c_trooper", "c_trooper", "c_lancer", "hound", "c_trooper", "c_warden", "c_trooper", "c_lancer", "c_rover", "engineer"],
   D: ["d_levy", "d_levy", "d_flak", "hound", "d_levy", "d_bastion", "d_levy", "d_flak", "d_hauler", "engineer"],
+  S: ["s_raider", "s_raider", "s_harpoon", "hound", "s_raider", "s_corsair", "s_raider", "s_harpoon", "s_skiff", "engineer"],
 };

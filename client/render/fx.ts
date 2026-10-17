@@ -226,6 +226,20 @@ export class Fx {
           case "bite":
             this.add({ k: "blood", x: ev.tx, y: ev.ty, z: 20, life: 0.5, size: 3, grow: 4, r: 140, g: 20, b: 20, a: 0.9 });
             break;
+          case "sonic": {
+            // a shockwave rolls from the emitter to the target
+            for (let k = 0; k < 3; k++) {
+              const f = (k + 1) / 4;
+              this.add({ k: "ring", x: mx + (ev.tx - mx) * f, y: my + (ev.ty - my) * f, z: mz + (ev.tz - mz) * f, life: 0.25 + k * 0.06, size: 3 + k * 2, grow: 26, r: 130, g: 255, b: 210, a: 0.55, add: true });
+            }
+            this.add({ k: "ring", x: ev.tx, y: ev.ty, z: 10, life: 0.4, size: 6, grow: 70, r: 140, g: 255, b: 215, a: 0.6, add: true });
+            this.add({ k: "flash", x: mx, y: my, z: mz, life: 0.12, size: 6, grow: 10, r: 150, g: 255, b: 220, a: 0.9, add: true });
+            break;
+          }
+          case "harpoon":
+            this.muzzle(mx, my, mz, 4, [255, 230, 190]);
+            this.add({ k: "smoke", x: mx, y: my, z: mz, life: 0.6, size: 3, grow: 6, r: 200, g: 200, b: 200, a: 0.4 });
+            break;
           case "bomb":
             break;
           case "charge":
@@ -252,6 +266,10 @@ export class Fx {
             break;
           case "beam":
             this.add({ k: "ring", x: ev.x, y: ev.y, z: 0, life: 0.35, size: 4, grow: 60, r: 170, g: 245, b: 255, a: 0.6, add: true });
+            break;
+          case "harpoon":
+            this.sparks(ev.x, ev.y, ev.z, 6, [255, 240, 200]);
+            this.add({ k: "flash", x: ev.x, y: ev.y, z: ev.z, life: 0.12, size: 6, grow: 8, r: 255, g: 230, b: 180, a: 0.9, add: true });
             break;
           case "flak":
             break;
@@ -340,6 +358,15 @@ export class Fx {
       }
       case "support":
         this.beam({ kind: "support", x1: ev.x, y1: ev.y, z1: 300, x2: ev.tx, y2: ev.ty, z2: 300, life: 0.25, color: "150,245,255", width: 2 });
+        break;
+      case "salvage":
+        if (ev.owner === (world as any).__me) this.text(ev.x, ev.y, 140, `+$${ev.amount}`, [255, 210, 90]);
+        break;
+      case "blackout":
+        this.add({ k: "ring", x: ev.x, y: ev.y, z: 20, life: 0.9, size: 10, grow: 520, r: 180, g: 150, b: 255, a: 0.8, add: true });
+        this.add({ k: "ring", x: ev.x, y: ev.y, z: 20, life: 1.3, size: 10, grow: 380, r: 120, g: 100, b: 255, a: 0.5, add: true });
+        this.add({ k: "flash", x: ev.x, y: ev.y, z: 60, life: 0.4, size: 30, grow: 120, r: 200, g: 180, b: 255, a: 0.8, add: true });
+        this.flash = Math.max(this.flash, 0.15);
         break;
       case "income":
         if (ev.owner === (world as any).__me) {

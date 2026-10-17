@@ -3,7 +3,7 @@ import { World } from "../sim/world";
 import type { Command } from "../sim/commands";
 import type { SimEvent } from "../sim/entity";
 import { TPS } from "../sim/fixed";
-import { RULES, SUPERWEAPONS } from "../sim/rules";
+import { RULES, SUPERWEAPONS, factionName } from "../sim/rules";
 import { PLAYER_COLORS, turnTicks } from "../shared/protocol";
 import { Optimistic } from "./optimistic";
 import { Renderer, type Mode, type ViewState } from "./render/renderer";
@@ -465,6 +465,14 @@ export class Game {
         this.minimap.ping(ev.x / 256, ev.y / 256);
         this.lastAlert = [ev.x, ev.y];
         break;
+      case "salvage":
+        if (ev.owner === this.me) this.audio.play("salvage", 0.35);
+        break;
+      case "blackout": {
+        const [v, p] = this.soundAt(ev.x, ev.y);
+        this.audio.play("blackout", Math.max(0.35, v), p);
+        break;
+      }
       case "nodeploy":
         if (ev.owner === this.me) this.audio.play("error");
         break;
@@ -497,12 +505,12 @@ export class Game {
       const rows = w.players
         .map(
           (p) =>
-            `<tr><td><span class="sw-dot" style="background:${PLAYER_COLORS[p.color].hex}"></span>${p.name}${winners.includes(p.idx) ? " 🏆" : ""}</td><td>${p.faction === "C" ? "Concord" : "Dominion"}</td><td>${p.stats.kills}</td><td>${p.stats.losses}</td><td>${p.stats.built}</td><td>$${p.stats.harvested.toLocaleString()}</td></tr>`,
+            `<tr><td><span class="sw-dot" style="background:${PLAYER_COLORS[p.color].hex}"></span>${p.name}${winners.includes(p.idx) ? " 🏆" : ""}</td><td>${factionName(p.faction)}</td><td>${p.stats.kills}</td><td>${p.stats.losses}</td><td>${p.stats.built}</td><td>$${p.stats.harvested.toLocaleString()}</td><td>${p.stats.salvage ? "$" + p.stats.salvage.toLocaleString() : "—"}</td></tr>`,
         )
         .join("");
       o.innerHTML = `<div class="panel go-panel"><h1 class="${won ? "win" : "lose"}">${title}</h1>
         <p>Match length ${fmtTime(Math.floor(w.tick / TPS))}</p>
-        <table class="stats"><tr><th>Commander</th><th>Faction</th><th>Kills</th><th>Losses</th><th>Built</th><th>Harvested</th></tr>${rows}</table>
+        <table class="stats"><tr><th>Commander</th><th>Faction</th><th>Kills</th><th>Losses</th><th>Built</th><th>Harvested</th><th>Salvage</th></tr>${rows}</table>
         <div class="btns"><button class="primary" data-a="exit">Return to menu</button><button data-a="watch">Keep watching</button></div></div>`;
       document.body.appendChild(o);
       (o.querySelector('[data-a="exit"]') as HTMLButtonElement).onclick = () => {

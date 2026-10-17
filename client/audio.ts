@@ -26,7 +26,11 @@ type SoundKind =
   | "build"
   | "alarm"
   | "promote"
-  | "crush";
+  | "crush"
+  | "sonic"
+  | "harpoon"
+  | "salvage"
+  | "blackout";
 
 export class Audio {
   ctx: AudioContext | null = null;
@@ -284,6 +288,43 @@ export class Audio {
         osc("triangle", 880, 1320, 0.25, 0.25);
         done(0.3);
         break;
+      case "sonic": {
+        // a warbling low pulse with a tremolo throb
+        const o = ctx.createOscillator();
+        o.type = "sine";
+        o.frequency.setValueAtTime(140, t);
+        o.frequency.exponentialRampToValueAtTime(60, t + 0.35);
+        const g = ctx.createGain();
+        const lfo = ctx.createOscillator();
+        lfo.frequency.value = 28;
+        const lg = ctx.createGain();
+        lg.gain.value = 0.4;
+        lfo.connect(lg).connect(g.gain);
+        this.env(g, t, 0.01, 0.7, 0.35);
+        o.connect(g).connect(out);
+        o.start(t);
+        o.stop(t + 0.45);
+        lfo.start(t);
+        lfo.stop(t + 0.45);
+        nz("bandpass", 700, 250, 0.3, 0.2, 2);
+        done(0.5);
+        break;
+      }
+      case "harpoon":
+        osc("triangle", 420, 210, 0.22, 0.3);
+        nz("bandpass", 1600, 600, 0.18, 0.3, 1.5);
+        done(0.3);
+        break;
+      case "salvage":
+        osc("triangle", 1320, 1320, 0.07, 0.18);
+        setTimeout(() => this.play("sell", 0.35), 70);
+        done(0.12);
+        break;
+      case "blackout":
+        osc("sawtooth", 900, 40, 1.4, 0.35, 0.01);
+        nz("lowpass", 3000, 80, 1.2, 0.5, 0.7);
+        done(1.6);
+        break;
     }
   }
 
@@ -434,6 +475,8 @@ export const FX_SOUND: Record<string, SoundKind> = {
   flak: "flak",
   snipe: "snipe",
   bite: "bite",
+  sonic: "sonic",
+  harpoon: "harpoon",
   bomb: "click",
   charge: "click",
 };

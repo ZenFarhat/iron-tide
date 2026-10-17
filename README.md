@@ -17,7 +17,7 @@ bun install
 bun run dev        # http://localhost:3000  (serves the client and the multiplayer server)
 ```
 
-- **Skirmish:** Main menu → *Skirmish vs AI*. Add up to three AI opponents (easy, normal or hard), with teams, map size, credits, game speed and superweapons configurable.
+- **Skirmish:** Main menu → *Skirmish vs AI*. Add up to three AI opponents (easy, normal or hard). Pick a hand-made battlefield or a random map in any biome; teams, map size, credits, game speed, superweapons and wildlife are configurable.
 - **Multiplayer:** Main menu → *Multiplayer* → *Create battle*. Click *Copy invite link* and send it: opening the link joins the room directly. Others can also join by the 5-letter room code or from the list, mark themselves ready, and the host starts. The host can set the game speed to 1×, 2×, 3×, 4× or 8×. Open two browser tabs to try it locally. Late joiners spectate, and the server replays the turn history so they catch up.
 - **Production:** `bun run start` (set `PORT` / `HOST`). `bun run build` also produces a static bundle in `dist/`, but online play needs the server.
 
@@ -58,9 +58,11 @@ The only runtime dependency is Bun itself.
 sim/        deterministic simulation, shared by client, tests and tools (pure TS, no DOM)
   fixed.ts    integer math: isqrt, integer atan2/sin tables, seeded RNG, state hashing
   rules.ts    all unit / structure / weapon / warhead data (original)
-  map.ts      seeded symmetric map generator (ore fields, gem fields, fuel wells, lakes, ridges)
+  map.ts      seeded symmetric map generator with five biomes (ore, gems, fuel wells, lakes, ice, ridges, herds)
+  maps.ts     hand-made battlefields, painted once and stamped through the map's symmetry
   world.ts    World: entities, commands, production, power, placement, shroud, defeat
-  units.ts    movement, group moves, jams and side-stepping, harvesters, aircraft, deploy, crush
+  units.ts    movement (foot, tracks, hover, naval), group moves, jams, harvesters, aircraft, deploy, crush
+  wildlife.ts neutral animals: herds that graze and bolt, big game that charges, predators that hunt
   combat.ts   targeting, weapons, projectiles, splash, veterancy, superweapons
   ai.ts       skirmish AI (runs inside the sim, so it works in multiplayer too)
 server/     Bun server: lobby, rooms, server-clocked lockstep relay, desync detection
@@ -82,9 +84,14 @@ scripts/    headless AI matches, balance duels, Playwright screenshot / UI / mul
 
 ## Gameplay
 
-- **Two factions.**
+- **Three factions.**
   - *Concord:* fast Warden tanks, Lens tanks, Skyguard Rovers, Striker jets, Phase Harvesters that teleport home, and Lumen Spires that relay beams into each other.
   - *Dominion:* heavy Bastion and Titan tanks, Arc Crawlers, Siege Launchers, Dreadnought airships, armed Ore Haulers, Arc Coils that Arc Troopers can supercharge, and a Fission Reactor that explodes when destroyed.
+  - *Syndicate:* a mercenary hover fleet. Skiffs, Corsair hovertanks, Howler sonic artillery, Leviathan hover fortresses and Salvage Skimmer harvesters all cross water. Infantry include Raiders, Harpooners, sonic Screamers and the amphibious Siren hero. Sonic Pylons splash groups of attackers. **Salvage:** the Syndicate earns 25% of every enemy unit's cost (10% of a structure's) when it destroys it.
+- **Navies.** Every faction builds a Naval Yard on open water. *Concord* gets the Patrol Cutter, Lens Frigate and Sunlance Cruiser; *Dominion* the Flak Gunboat, River Monitor and Rocket Barge; *Syndicate* the Blockade Runner and Sonic Galleon. Ships sail only on water, long-range ships bombard targets inland, and shallow **fords** can be used by both ships and ground units.
+- **Biomes:** temperate, Arctic snow, tundra, desert and savanna safari. Each has its own terrain, scenery and weather. On snow and tundra, tanks can drive over frozen lakes but ships cannot sail them.
+- **Hand-made battlefields:** Twin Rivers, Archipelago, Glacier Pass, Frozen Fjords, Permafrost, Dune Sea, Oasis Run, Serengeti and Crater Highlands (2 or 4 players), alongside random maps in any biome. Every map is symmetric, so all starts get the same terrain and ore.
+- **Wildlife** (toggle in the lobby): zebras, giraffes and elephants with lion prides on the savanna; reindeer and polar bears in the Arctic; musk oxen, wolves and reindeer on the tundra; camels and jackals in the desert. Herds graze and drift across the map and bolt together when shot. Elephants, musk oxen and bears charge their attackers. Predators hunt infantry that wanders into their range. You can hunt any animal, and your units fight back against predators.
 - **Economy:** gold ore ($25) and gems ($50), ore regrowth and spread, refinery docking with queues, and Fuel Wells you capture with Engineers.
 - **Power:** low power slows production, shuts down powered defenses and radar, and pauses superweapon charging.
 - **Production:** sidebar tabs, clock-wipe cameos, and progressive payment that pauses when credits run out. Extra factories speed up production. Hold/cancel with right-click, shift-click queues 5. Primary buildings and rally points. Placement is limited by build radius.
@@ -97,6 +104,8 @@ scripts/    headless AI matches, balance duels, Playwright screenshot / UI / mul
   - Tempest Engine: a lightning storm.
   - Phase Gate: teleports a group of vehicles.
   - Bulwark Projector: temporary invulnerability.
+  - Barrage Array: a long artillery barrage over a wide area.
+  - Blackout Mast: an electromagnetic pulse that freezes enemy vehicles, ships and defenses for 20 seconds.
 - **Shroud:** areas stay revealed once explored. Allies share vision.
 - **Victory:** the "short game" rule applies — a player loses when they have no structures and no Mobile Hub left.
 
@@ -119,13 +128,13 @@ Modern controls (right-click to command) can be switched on in the in-game menu.
 ## Development
 
 ```bash
-bun test                              # determinism + mechanics (23 tests)
+bun test                              # determinism, mechanics, maps, navies, wildlife (48 tests)
 bun run typecheck
-bun scripts/headless.ts 1 20 CD       # AI vs AI match (seed, minutes, factions)
+bun scripts/headless.ts 1 20 CDS serengeti   # AI vs AI match (seed, minutes, factions, map id or biome)
 bun scripts/duel.ts c_warden d_bastion 6000   # equal-cost balance duel
 bun scripts/shot.ts out/              # headless Chrome screenshots (server must be running)
 bun scripts/ui-test.ts out/           # real mouse/keyboard flow
-bun scripts/mp-test.ts out/ 40 4      # two browsers, online lockstep at 4× speed, latency + desync check
+bun scripts/mp-test.ts out/ 40 4      # two browsers, online lockstep at 4× speed (FACTIONS=SD MAP=serengeti)
 bun scripts/fx-shot.ts out/           # staged battle + superweapon effects
 ```
 
@@ -134,6 +143,6 @@ In the browser console, `__ironTide.aiTakeover("hard")` hands your side to the A
 
 ## Not included
 
-There is no naval combat, no terrain elevation or bridges, no garrisonable civilian buildings,
-no spies or mind control, no crates and no campaign. The simulation is structured so these can
-be added as rules plus behaviours.
+There are no naval transports or submarines, no terrain elevation or bridges, no garrisonable
+civilian buildings, no spies or mind control, no crates and no campaign. The simulation is
+structured so these can be added as rules plus behaviours.

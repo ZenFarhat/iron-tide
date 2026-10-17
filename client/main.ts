@@ -26,7 +26,7 @@ const menu: Menu = new Menu(menuRoot, {
     const done = loading("Generating battlefield…");
     setTimeout(() => {
       const world = new World(
-        { seed: s.settings.seed, mapSize: s.settings.mapSize, credits: s.settings.credits, startUnits: s.settings.startUnits, superweapons: s.settings.superweapons, shortGame: s.settings.shortGame },
+        { seed: s.settings.seed, mapSize: s.settings.mapSize, credits: s.settings.credits, startUnits: s.settings.startUnits, superweapons: s.settings.superweapons, shortGame: s.settings.shortGame, map: s.settings.map, theme: s.settings.theme, wildlife: s.settings.wildlife },
         s.players.map((p) => ({ name: p.name, faction: p.faction, color: p.color, team: p.team, ai: p.ai })),
       );
       const session = new LocalSession();
@@ -49,7 +49,7 @@ const menu: Menu = new Menu(menuRoot, {
     const done = loading(s.you >= 0 ? "Deploying forces…" : "Joining as spectator…");
     setTimeout(() => {
       const world = new World(
-        { seed: s.seed, mapSize: s.settings.mapSize, credits: s.settings.credits, startUnits: s.settings.startUnits, superweapons: s.settings.superweapons, shortGame: s.settings.shortGame },
+        { seed: s.seed, mapSize: s.settings.mapSize, credits: s.settings.credits, startUnits: s.settings.startUnits, superweapons: s.settings.superweapons, shortGame: s.settings.shortGame, map: s.settings.map, theme: s.settings.theme, wildlife: s.settings.wildlife },
         s.players.map((p) => ({ name: p.name, faction: p.faction, color: p.color, team: p.team, ai: p.ai })),
       );
       const session = new NetSession(s.net, s.you, s.history);

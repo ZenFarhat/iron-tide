@@ -70,6 +70,8 @@ export class Entity {
   attackerId = 0;
   invuln = 0;
   healT = 0;
+  disabledUntil = 0; // frozen by a blackout pulse until this tick
+  herd = -1; // wildlife: index into World.herds
   // structures
   bx = 0;
   by = 0;
@@ -162,9 +164,9 @@ export class Player {
   radar = false;
   explored: Uint8Array;
   exploredVersion = 0;
-  queues: Record<Queue, QueueItem[]> = { bld: [], def: [], inf: [], veh: [], air: [] };
+  queues: Record<Queue, QueueItem[]> = { bld: [], def: [], inf: [], veh: [], air: [], sea: [] };
   ready: { bld: string | null; def: string | null } = { bld: null, def: null };
-  primary: Record<Queue, number> = { bld: 0, def: 0, inf: 0, veh: 0, air: 0 };
+  primary: Record<Queue, number> = { bld: 0, def: 0, inf: 0, veh: 0, air: 0, sea: 0 };
   defeated = false;
   left = false;
   tags = new Set<string>();
@@ -172,7 +174,7 @@ export class Player {
   alertAt = -10000;
   fundsAlertAt = -10000;
   harvAlertAt = -10000;
-  stats = { built: 0, kills: 0, losses: 0, harvested: 0, spent: 0 };
+  stats = { built: 0, kills: 0, losses: 0, harvested: 0, spent: 0, salvage: 0 };
   aiState: any = null;
 
   constructor(idx: number, init: PlayerInit, cells: number) {

@@ -2,7 +2,7 @@
 import { Proj, type Entity, type Player } from "./entity";
 import type { World } from "./world";
 import { LEP, HALF, dist2, facingTo, isqrt } from "./fixed";
-import { ARMORS, CONSTRUCT_TICKS, RULES, SUPERWEAPONS, WARHEADS, WEAPONS, type Weapon } from "./rules";
+import { ARMORS, CONSTRUCT_TICKS, RULES, SALVAGE_PCT, SUPERWEAPONS, WARHEADS, WEAPONS, type Weapon } from "./rules";
 import { nearestFreeCell } from "./units";
 
 const ARMOR_IDX: Record<string, number> = {};
@@ -44,7 +44,9 @@ export function findTarget(w: World, e: Entity, range: number): Entity | null {
   let best: Entity | null = null,
     bs = 1e18;
   w.forNear(e.x, e.y, R, (o) => {
-    if (!w.isEnemy(e.owner, o.owner) || o.r.wall) return;
+    // players also defend themselves against predators that are on the hunt
+    const hostile = w.isEnemy(e.owner, o.owner) || (e.owner >= 0 && !!o.r.animal && o.order === "attack");
+    if (!hostile || o.r.wall) return;
     const wp = weaponFor(e, o);
     if (!wp) return;
     const d = w.distTo(e.x, e.y, o);
@@ -166,8 +168,8 @@ export function applyDamage(w: World, t: Entity, dmg: number, warhead: string, a
     killEntity(w, t, attacker, WARHEADS[warhead].infDeath ?? "explode");
     return;
   }
-  // retaliation
-  if (attacker && !attacker.dead && t.kind !== "bld" && (t.order === "idle" || t.order === "guard") && !t.target && w.isEnemy(t.owner, attacker.owner)) {
+  // retaliation (players' units also fight back against wildlife that attacks them)
+  if (attacker && !attacker.dead && t.kind !== "bld" && (t.order === "idle" || t.order === "guard") && !t.target && (w.isEnemy(t.owner, attacker.owner) || (t.owner >= 0 && attacker.r.animal))) {
     if (weaponFor(t, attacker)) {
       t.target = attacker.id;
       t.autoTarget = true;
@@ -204,7 +206,15 @@ export function killEntity(w: World, e: Entity, killer: Entity | null, death: st
   }
   if (owner >= 0) w.players[owner].stats.losses++;
   if (killer && killer.owner >= 0 && w.isEnemy(killer.owner, owner)) {
-    w.players[killer.owner].stats.kills++;
+    const kp = w.players[killer.owner];
+    kp.stats.kills++;
+    if (kp.faction === "S" && e.r.cost > 0) {
+      // Syndicate salvage crews strip every wreck for credits
+      const v = Math.floor((e.r.cost * (e.kind === "bld" ? SALVAGE_PCT.structure : SALVAGE_PCT.unit)) / 100);
+      kp.credits += v;
+      kp.stats.salvage += v;
+      w.emit({ e: "salvage", owner: killer.owner, x: e.x, y: e.y, amount: v });
+    }
     if (!killer.dead && killer.kind !== "bld") {
       killer.xp += e.r.cost;
       const c = Math.max(100, killer.r.cost);
@@ -443,6 +453,26 @@ export function fireSuperweapon(w: World, p: Player, kind: string, x: number, y:
       w.eva(-1, "Phase shift detected");
       break;
     }
+    case "barrage":
+      w.barrages.push({ owner: p.idx, src: b.id, x: tx, y: ty, start: w.tick + 40, end: w.tick + 40 + 200 });
+      w.emit({ e: "swlaunch", kind, owner: p.idx, x: tx, y: ty });
+      w.eva(-1, "Warning: artillery barrage incoming");
+      break;
+    case "blackout": {
+      // freezes every enemy vehicle, ship and structure in the blast for 20 seconds
+      w.forNear(tx, ty, sw.radius, (o) => {
+        if (o.kind === "inf" || o.kind === "air" || o.owner < 0 || !w.isEnemy(p.idx, o.owner)) return;
+        o.disabledUntil = w.tick + 400;
+        if (o.kind === "veh") {
+          o.target = 0;
+          o.burstLeft = 0;
+        }
+      });
+      w.emit({ e: "swlaunch", kind, owner: p.idx, x: tx, y: ty });
+      w.emit({ e: "blackout", x: tx, y: ty, r: sw.radius });
+      w.eva(-1, "Warning: blackout pulse detected");
+      break;
+    }
     case "bulwark": {
       const doomed: Entity[] = [];
       w.forNear(tx, ty, sw.radius, (o) => {
@@ -489,6 +519,22 @@ export function updateSuperweaponEffects(w: World) {
       explode(w, bx, by, 0, 220, "storm", s.owner, 0, 0, true);
     }
     w.storms = w.storms.filter((s) => w.tick <= s.end);
+  }
+  if (w.barrages.length) {
+    const r = SUPERWEAPONS.barrage.radius;
+    for (const s of w.barrages) {
+      if (w.tick < s.start || w.tick > s.end || (w.tick - s.start) % 6 !== 0) continue;
+      const dx = w.rng.range(-r, r),
+        dy = w.rng.range(-r, r);
+      if (dx * dx + dy * dy > r * r) continue;
+      const bx = Math.max(0, Math.min(w.map.w * LEP - 1, s.x + dx)),
+        by = Math.max(0, Math.min(w.map.h * LEP - 1, s.y + dy));
+      // shells fall out of the sky, arriving from the barrage array's side of the map
+      const wp = WEAPONS.barrageShell;
+      const pr = new Proj(w.newId(), wp, s.owner, s.src, 0, bx - 600, by - 600, 2600, bx, by, 0, wp.damage);
+      w.projs.push(pr);
+    }
+    w.barrages = w.barrages.filter((s) => w.tick <= s.end);
   }
   if (w.rads.length) {
     if (w.tick % 10 === 0)

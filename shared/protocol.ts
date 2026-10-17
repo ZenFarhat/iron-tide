@@ -1,9 +1,10 @@
 // Wire protocol between browser clients and the Bun server (JSON over WebSocket).
 import type { Command } from "../sim/commands";
-import type { Faction } from "../sim/rules";
+import { FACTIONS, type Faction } from "../sim/rules";
 import { TPS } from "../sim/fixed";
+import type { Theme } from "../sim/map";
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 /** real time between network turns; shorter turns mean less input delay */
 export const TURN_MS = 50;
 export const MAX_SLOTS = 4;
@@ -36,9 +37,19 @@ export interface LobbySettings {
   superweapons: boolean;
   shortGame: boolean;
   speed: number;
+  /** "random" or a hand-made map id */
+  map: string;
+  /** biome for random maps */
+  theme: Theme;
+  wildlife: boolean;
 }
 
-export const DEFAULT_LOBBY: LobbySettings = { mapSize: 72, credits: 10000, startUnits: 3, superweapons: true, shortGame: true, speed: 1 };
+export const DEFAULT_LOBBY: LobbySettings = { mapSize: 72, credits: 10000, startUnits: 3, superweapons: true, shortGame: true, speed: 1, map: "random", theme: "temperate", wildlife: true };
+
+/** resolve a "Random" faction pick */
+export function rollFaction(f: SlotFaction): Faction {
+  return f === "R" ? FACTIONS[Math.floor(Math.random() * FACTIONS.length)].id : f;
+}
 
 export interface RoomSummary {
   id: string;

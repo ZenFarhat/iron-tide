@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { World } from "../sim/world";
-import { LEP } from "../sim/fixed";
+import { LEP, facingTo } from "../sim/fixed";
+import { AIR_Z } from "../sim/units";
 import { SUPERWEAPONS } from "../sim/rules";
 import { killEntity } from "../sim/combat";
 import type { Command } from "../sim/commands";
@@ -196,6 +197,84 @@ describe("mechanics", () => {
     expect(jet.home).toBe(b.id);
     expect(b.pads).toContain(jet.id);
     expect(a.pads).not.toContain(jet.id);
+  });
+
+  test("jets sent somewhere fly back to their pads instead of hovering in a pile", () => {
+    const w = sandbox();
+    const [hx, hy] = openSpot(w, 3, 3, [15, 15]);
+    w.addStructure("c_hub", 0, hx, hy, true);
+    w.addStructure("c_power", 0, ...openSpot(w, 2, 2, [hx + 4, hy]), true);
+    w.addStructure("c_power", 0, ...openSpot(w, 2, 2, [hx + 4, hy + 3]), true);
+    const ac = w.addStructure("c_aircmd", 0, ...openSpot(w, 3, 3, [hx, hy + 5]), true)!;
+    const jets = () => w.ents.filter((e) => !e.dead && e.type === "c_striker");
+    w.players[0].credits = 50000;
+    w.step([[0, { c: "build", type: "c_striker", n: 4 }]]);
+    for (let i = 0; i < 20000 && jets().length < 4; i++) w.step([]);
+    run(w, 600, [[0, { c: "move", ids: jets().map((j) => j.id), x: ac.bx + 1, y: ac.by + 8 }]]);
+    expect(jets().every((j) => j.air === "landed" && ac.pads.includes(j.id))).toBe(true);
+    expect(new Set(jets().map((j) => `${j.x},${j.y}`)).size).toBe(4);
+  });
+
+  test("a jet that ends up right over its target still turns and fires", () => {
+    const w = sandbox();
+    const [hx, hy] = openSpot(w, 3, 3, [15, 15]);
+    w.addStructure("c_hub", 0, hx, hy, true);
+    w.addStructure("c_power", 0, ...openSpot(w, 2, 2, [hx + 4, hy]), true);
+    w.addStructure("c_aircmd", 0, ...openSpot(w, 3, 3, [hx, hy + 5]), true)!;
+    const target = w.addStructure("d_power", 1, ...openSpot(w, 2, 2, [40, 40]), true)!;
+    w.step([[0, { c: "build", type: "c_striker" }]]);
+    run(w, 1500);
+    const jet = w.ents.find((e) => e.type === "c_striker")!;
+    // airborne, directly above the target and facing away from where it wants to aim
+    jet.air = "flying";
+    jet.x = jet.px = target.x;
+    jet.y = jet.py = target.y;
+    jet.z = jet.pz = AIR_Z;
+    jet.facing = (facingTo(0, 0) + 128) & 255;
+    const hp0 = target.hp;
+    run(w, 200, [[0, { c: "attack", ids: [jet.id], t: target.id }]]);
+    expect(target.hp).toBeLessThan(hp0);
+  });
+
+  test("new infantry fan out at the door and at the rally point", () => {
+    const w = sandbox();
+    const [hx, hy] = openSpot(w, 3, 3, [20, 20]);
+    w.addStructure("c_hub", 0, hx, hy, true);
+    w.addStructure("c_power", 0, ...openSpot(w, 2, 2, [hx + 4, hy]), true);
+    const bar = w.addStructure("c_barracks", 0, ...openSpot(w, 2, 3, [hx - 4, hy + 4]), true)!;
+    const troops = () => w.ents.filter((e) => !e.dead && e.type === "c_trooper");
+    const spots = (list: typeof w.ents) => new Set(list.map((e) => `${e.x},${e.y}`)).size;
+    w.step([[0, { c: "build", type: "c_trooper", n: 5 }]]);
+    for (let i = 0; i < 20000 && troops().length < 5; i++) w.step([]);
+    run(w, 200);
+    expect(spots(troops())).toBe(5);
+    const [rx, ry] = openSpot(w, 1, 1, [bar.bx - 3, bar.by + 8]);
+    w.step([[0, { c: "rally", t: bar.id, x: rx, y: ry }]]);
+    const first = new Set(troops().map((e) => e.id));
+    w.step([[0, { c: "build", type: "c_trooper", n: 5 }]]);
+    for (let i = 0; i < 20000 && troops().length < 10; i++) w.step([]);
+    run(w, 300);
+    const rallied = troops().filter((e) => !first.has(e.id));
+    expect(spots(rallied)).toBe(5);
+    for (const e of rallied) expect(Math.hypot(e.x - C(rx), e.y - C(ry))).toBeLessThan(2.5 * LEP);
+  });
+
+  test("vehicles drive to the rally point, each to its own cell", () => {
+    const w = sandbox();
+    const [hx, hy] = openSpot(w, 3, 3, [20, 20]);
+    w.addStructure("c_hub", 0, hx, hy, true);
+    w.addStructure("c_power", 0, ...openSpot(w, 2, 2, [hx + 4, hy]), true);
+    w.addStructure("c_power", 0, ...openSpot(w, 2, 2, [hx + 4, hy + 3]), true);
+    const fac = w.addStructure("c_factory", 0, ...openSpot(w, 3, 3, [hx - 1, hy + 5]), true)!;
+    const [rx, ry] = openSpot(w, 1, 1, [fac.bx + 1, fac.by + 9]);
+    w.players[0].credits = 50000;
+    w.step([[0, { c: "rally", t: fac.id, x: rx, y: ry }]]);
+    const tanks = () => w.ents.filter((e) => !e.dead && e.type === "c_warden");
+    w.step([[0, { c: "build", type: "c_warden", n: 4 }]]);
+    for (let i = 0; i < 20000 && tanks().length < 4; i++) w.step([]);
+    run(w, 400);
+    expect(new Set(tanks().map((e) => e.cell)).size).toBe(4);
+    for (const e of tanks()) expect(Math.hypot(e.x - C(rx), e.y - C(ry))).toBeLessThan(2.5 * LEP);
   });
 
   test("veterancy is earned from kills", () => {

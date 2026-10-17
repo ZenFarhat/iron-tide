@@ -105,6 +105,8 @@ export class Renderer {
   /** game seconds per real second this frame (0 while paused); scales per-frame particle spawns */
   private simRate = 1;
   private trailT = 0;
+  /** screen-space weather particles (snowflakes, dust motes), in css px */
+  private weather: { x: number; y: number; s: number; v: number; ph: number }[] = [];
 
   constructor(canvas: HTMLCanvasElement, world: World, fx: Fx) {
     this.canvas = canvas;
@@ -328,7 +330,11 @@ export class Renderer {
         const sx = (x - y) * HW,
           sy = (x + y + 1) * HH;
         if (!inView(sx, sy)) continue;
-        list.push({ d: x + y + 1, k: t === T_TREE ? 3 : 4, x: sx, y: sy, z: 0, v: m.variant[i] });
+        // trees beside water grow differently (desert palms)
+        let wet = 0;
+        if (t === T_TREE)
+          for (const n of [i - 1, i + 1, i - m.w, i + m.w]) if (n >= 0 && n < m.terrain.length && m.waterOk(n)) wet = 256;
+        list.push({ d: x + y + 1, k: t === T_TREE ? 3 : 4, x: sx, y: sy, z: 0, v: m.variant[i] + wet });
       }
     // structures placed by us but not started by the sim yet (optimistic preview)
     if (me >= 0)
@@ -370,10 +376,10 @@ export class Renderer {
           this.drawInfantry(it.e!, it.x, it.y);
           break;
         case 3:
-          drawSprite(g, treeSprite(it.v!), it.x, it.y);
+          drawSprite(g, treeSprite(it.v! & 255, m.theme, it.v! >= 256), it.x, it.y);
           break;
         case 4:
-          drawSprite(g, rockSprite(it.v!), it.x, it.y - HH);
+          drawSprite(g, rockSprite(it.v!, m.theme), it.x, it.y - HH);
           break;
         case 5: {
           const c = this.fx.wrecks[it.v!];
@@ -414,6 +420,7 @@ export class Renderer {
 
     // overlays
     this.drawOverlays(vs, alpha);
+    this.drawWeather(dt);
 
     // screen space
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -434,6 +441,36 @@ export class Renderer {
     if (vs.mouse.inside) drawCursor(g, vs.cursor, vs.mouse.x, vs.mouse.y, this.uiTime);
   }
 
+  /** biome weather drawn over the battlefield: snowfall, tundra flurries, drifting desert dust */
+  private drawWeather(dt: number) {
+    const theme = this.world.map.theme;
+    const n = theme === "snow" ? 160 : theme === "tundra" ? 55 : theme === "desert" ? 40 : 0;
+    if (!n) return;
+    const g = this.g;
+    const vw = this.cam.vw,
+      vh = this.cam.vh;
+    while (this.weather.length < n) this.weather.push({ x: Math.random() * vw, y: Math.random() * vh, s: 0.6 + Math.random() * 1.6, v: 0.6 + Math.random() * 0.8, ph: Math.random() * 6 });
+    g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    const dust = theme === "desert";
+    g.fillStyle = dust ? "rgba(235,205,150,0.35)" : "rgba(255,255,255,0.8)";
+    const rate = dt * this.simRate;
+    for (const f of this.weather) {
+      if (dust) {
+        f.x += (40 + f.v * 30) * rate;
+        f.y += Math.sin(this.time + f.ph) * 6 * rate;
+      } else {
+        f.y += (26 + f.v * 34) * f.s * rate;
+        f.x += (Math.sin(this.time * 0.8 + f.ph) * 10 - 8) * rate;
+      }
+      if (f.y > vh + 4) (f.y = -4), (f.x = Math.random() * vw);
+      if (f.x > vw + 4) f.x = -4;
+      if (f.x < -4) f.x = vw + 4;
+      g.beginPath();
+      g.arc(f.x, f.y, dust ? f.s * 0.8 : f.s, 0, TAU);
+      g.fill();
+    }
+  }
+
   private drawPlacement(vs: ViewState) {
     const g = this.g;
     const w = this.world;
@@ -449,7 +486,7 @@ export class Renderer {
         if (!w.map.inside(x, y)) cellOk = false;
         else {
           const i = y * w.map.w + x;
-          if (!w.map.buildableTerrain(i) || w.bldAt[i] || !p.explored[i] || (w.vehAt[i] && w.get(w.vehAt[i])) || w.infAt[i]) cellOk = false;
+          if (!w.siteOk(r, i) || w.bldAt[i] || !p.explored[i] || (w.vehAt[i] && w.get(w.vehAt[i])) || w.infAt[i]) cellOk = false;
         }
         const sx = (x - y) * HW,
           sy = (x + y) * HH;
@@ -475,7 +512,7 @@ export class Renderer {
     const team = this.team(e.owner);
     const r = e.r;
     const damaged = e.hp < r.hp * 0.5;
-    const off = r.needsPower && !e.powered;
+    const off = (r.needsPower && !e.powered) || e.disabledUntil > w.tick;
     const dark = off ? 0.4 : damaged ? 0.22 : 0;
     const sp = structSprite(e.type, team, dark);
     let prog = 1;
@@ -665,7 +702,24 @@ export class Renderer {
     const g = this.g;
     const team = this.team(e.owner);
     const m = getUnitModel(e.type);
-    const dark = e.hp < e.r.hp * 0.35 ? 0.2 : 0;
+    const w = this.world;
+    const blacked = e.disabledUntil > w.tick;
+    const dark = blacked ? 0.45 : e.hp < e.r.hp * 0.35 ? 0.2 : 0;
+    const loco = e.r.loco;
+    const moving = e.x !== e.px || e.y !== e.py;
+    if (loco === "naval" || loco === "hover") {
+      // ships ride the swell, hovercraft float on their cushion
+      if (!blacked) sy += Math.sin(this.time * (loco === "naval" ? 1.6 : 4) + e.id) * (loco === "naval" ? 0.7 : 0.5) - (loco === "hover" ? 1.5 : 0);
+      const onWater = w.map.waterOk(e.cell);
+      if (moving && onWater && this.chance(loco === "naval" ? 0.6 : 0.45)) {
+        const a = (e.facing / 256) * TAU;
+        const back = loco === "naval" ? 120 : 70;
+        this.fx.add({ k: "dust", x: e.x - Math.cos(a) * back + (Math.random() - 0.5) * 50, y: e.y - Math.sin(a) * back + (Math.random() - 0.5) * 50, z: 0, vz: 0, life: 0.9, size: 2, grow: 5, r: 225, g: 238, b: 245, a: 0.4 });
+      } else if (moving && loco === "hover" && this.chance(0.25)) {
+        this.fx.add({ k: "dust", x: e.x + (Math.random() - 0.5) * 90, y: e.y + (Math.random() - 0.5) * 90, z: 6, vz: 20, life: 0.7, size: 2.5, grow: 6, r: 170, g: 155, b: 120, a: 0.35 });
+      }
+    }
+    if (blacked && this.chance(0.15)) this.fx.sparks(e.x, e.y, 60, 2, [190, 170, 255]);
     const body = vehicleBody(e.type, facing32(e.facing), team, dark);
     drawSprite(g, body, sx, sy);
     if (m.turret && m.pivot) {
@@ -691,6 +745,8 @@ export class Renderer {
     if (e.deployed) frame = 6;
     else if (e.x !== e.px || e.y !== e.py) frame = 1 + (Math.floor(this.time * 9 + e.id) % 4);
     else if (this.world.tick - e.lastFire < 4) frame = 5;
+    // idle wildlife spends a good part of its time with its head down, grazing
+    if (e.r.animal && frame === 0 && (this.time * 0.35 + e.id * 0.37) % 3 < 1.7) frame = 6;
     const sp = infantrySprite(e.type, facing8(e.facing), frame, team);
     const g = this.g;
     g.fillStyle = "rgba(0,0,0,0.25)";
@@ -765,6 +821,20 @@ export class Renderer {
           break;
         }
         case "bomb":
+          if (p.w.id === "barrageShell") {
+            // incoming barrage round: a bright streak out of the sky
+            g.save();
+            g.globalCompositeOperation = "lighter";
+            g.strokeStyle = "rgba(255,170,80,0.9)";
+            g.lineWidth = 2.5;
+            g.beginPath();
+            g.moveTo(qx, qy - 14);
+            g.lineTo(sx, sy);
+            g.stroke();
+            g.restore();
+            if (trail) this.fx.add({ k: "smoke", x: p.px, y: p.py, z: p.pz, life: 1, size: 2, grow: 6, r: 180, g: 180, b: 180, a: 0.45 });
+            break;
+          }
           g.fillStyle = "#2a2a2a";
           g.beginPath();
           g.ellipse(sx, sy, 2.5, 4, 0, 0, TAU);

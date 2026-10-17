@@ -1,20 +1,73 @@
 // Procedural per-pixel terrain, cached in 16×16-cell chunks.
-import type { GameMap } from "../../sim/map";
-import { T_CLEAR, T_DIRT, T_PAVE, T_ROCK, T_ROUGH, T_SAND, T_TREE, T_WATER } from "../../sim/map";
+import type { GameMap, Theme } from "../../sim/map";
+import { T_CLEAR, T_DIRT, T_ICE, T_PAVE, T_ROCK, T_ROUGH, T_SAND, T_SHALLOW, T_TREE, T_WATER } from "../../sim/map";
 import { HW, HH } from "./iso";
 
 export const CHUNK = 16;
 
-// base colours per terrain type
-const BASE: Record<number, [number, number, number]> = {
-  [T_CLEAR]: [92, 122, 58],
-  [T_DIRT]: [134, 111, 72],
-  [T_ROUGH]: [112, 102, 80],
-  [T_WATER]: [36, 84, 116],
-  [T_ROCK]: [118, 114, 104],
-  [T_TREE]: [74, 104, 48],
-  [T_SAND]: [190, 170, 122],
-  [T_PAVE]: [112, 112, 112],
+type RGB = [number, number, number];
+// base colours per terrain type, per biome
+const PALETTES: Record<Theme, Record<number, RGB>> = {
+  temperate: {
+    [T_CLEAR]: [92, 122, 58],
+    [T_DIRT]: [134, 111, 72],
+    [T_ROUGH]: [112, 102, 80],
+    [T_WATER]: [36, 84, 116],
+    [T_ROCK]: [118, 114, 104],
+    [T_TREE]: [74, 104, 48],
+    [T_SAND]: [190, 170, 122],
+    [T_PAVE]: [112, 112, 112],
+    [T_ICE]: [178, 212, 228],
+    [T_SHALLOW]: [86, 132, 136],
+  },
+  snow: {
+    [T_CLEAR]: [222, 230, 238],
+    [T_DIRT]: [194, 203, 214],
+    [T_ROUGH]: [146, 150, 158],
+    [T_WATER]: [34, 70, 98],
+    [T_ROCK]: [124, 128, 138],
+    [T_TREE]: [204, 214, 224],
+    [T_SAND]: [214, 220, 226],
+    [T_PAVE]: [150, 152, 158],
+    [T_ICE]: [172, 210, 230],
+    [T_SHALLOW]: [86, 128, 156],
+  },
+  tundra: {
+    [T_CLEAR]: [124, 128, 88],
+    [T_DIRT]: [118, 100, 76],
+    [T_ROUGH]: [124, 122, 112],
+    [T_WATER]: [46, 78, 98],
+    [T_ROCK]: [112, 112, 108],
+    [T_TREE]: [96, 106, 72],
+    [T_SAND]: [160, 150, 120],
+    [T_PAVE]: [120, 118, 112],
+    [T_ICE]: [184, 210, 222],
+    [T_SHALLOW]: [94, 122, 132],
+  },
+  desert: {
+    [T_CLEAR]: [214, 184, 134],
+    [T_DIRT]: [188, 150, 104],
+    [T_ROUGH]: [166, 132, 98],
+    [T_WATER]: [38, 132, 148],
+    [T_ROCK]: [168, 108, 74],
+    [T_TREE]: [196, 170, 116],
+    [T_SAND]: [232, 202, 146],
+    [T_PAVE]: [170, 160, 140],
+    [T_ICE]: [190, 214, 222],
+    [T_SHALLOW]: [96, 176, 170],
+  },
+  safari: {
+    [T_CLEAR]: [174, 164, 90],
+    [T_DIRT]: [164, 116, 74],
+    [T_ROUGH]: [148, 128, 96],
+    [T_WATER]: [66, 100, 92],
+    [T_ROCK]: [138, 114, 96],
+    [T_TREE]: [146, 150, 80],
+    [T_SAND]: [198, 174, 118],
+    [T_PAVE]: [140, 130, 110],
+    [T_ICE]: [190, 214, 222],
+    [T_SHALLOW]: [116, 124, 94],
+  },
 };
 
 function hash2(x: number, y: number) {
@@ -42,8 +95,12 @@ export class TerrainCache {
   cw: number;
   ch: number;
   colors: Float32Array; // per-cell rgb
+  theme: Theme;
+  private base: Record<number, RGB>;
   constructor(map: GameMap) {
     this.map = map;
+    this.theme = map.theme;
+    const BASE = (this.base = PALETTES[map.theme] ?? PALETTES.temperate);
     this.cw = Math.ceil(map.w / CHUNK);
     this.ch = Math.ceil(map.h / CHUNK);
     const n = map.w * map.h;
@@ -58,7 +115,12 @@ export class TerrainCache {
       let r = b[0],
         g = b[1],
         bl = b[2];
-      if (t === T_CLEAR || t === T_TREE) {
+      if (this.theme === "snow" && t !== T_WATER && t !== T_SHALLOW) {
+        // snowfields: faint blue-grey drifts
+        r += mv * 14;
+        g += mv * 14;
+        bl += mv * 10;
+      } else if (t === T_CLEAR || t === T_TREE) {
         r += mv * 30;
         g += mv * 36;
         bl += mv * 10;
@@ -151,14 +213,30 @@ export class TerrainCache {
         const n2 = vnoise(X * 2.2 + 31, Y * 2.2 + 17) - 0.5;
         const grain = hash2(px + ci * 977, py + cj * 491) - 0.5;
         let k = 1 + n1 * 0.16 + n2 * 0.12 + grain * 0.06;
-        if (t === T_WATER) {
+        const th = this.theme;
+        if (t === T_WATER || t === T_SHALLOW) {
           const wv = vnoise(X * 3 + Y * 1.5, Y * 4) - 0.5;
-          k = 1 + wv * 0.22 + grain * 0.03;
-          // brighter towards shore
+          k = 1 + wv * (t === T_SHALLOW ? 0.14 : 0.22) + grain * 0.03;
+          // fords: sandbars show through the water
+          if (t === T_SHALLOW && vnoise(X * 2.5 + 9, Y * 2.5) > 0.62) k += 0.1;
+        } else if (t === T_ICE) {
+          // frozen sheet: smooth, with hairline cracks and wind-polished streaks
+          k = 1 + n2 * 0.06 + grain * 0.02;
+          const crack = Math.abs(vnoise(X * 1.1 + 3, Y * 1.1 + 11) - 0.5);
+          if (crack < 0.011) k -= 0.16;
+          if (vnoise(X * 0.9 + Y * 0.9, Y * 0.3) > 0.7) k += 0.07;
         } else if (t === T_ROUGH) k += (hash2(px * 3 + 7, py * 5 + ci) > 0.93 ? -0.25 : 0) + n1 * 0.1;
-        else if (t === T_CLEAR || t === T_TREE) {
-          // grass blades speckle
-          if (hash2(px + 11 * cj, py * 2 + ci) > 0.96) k += 0.18;
+        else if (th === "snow") {
+          k = 1 + n1 * 0.06 + n2 * 0.05 + grain * 0.03;
+          if (hash2(px + 5 * cj, py * 3 + ci) > 0.985) k += 0.12; // glitter
+        } else if (th === "desert" && t === T_SAND) {
+          // wind ripples across the dunes
+          const ripple = vnoise(X * 0.8, Y * 0.8) * 6 + (X - Y) * 2.2;
+          k += (ripple - Math.floor(ripple) > 0.82 ? -0.07 : 0.02) + n1 * 0.05;
+        } else if (t === T_CLEAR || t === T_TREE) {
+          // grass blades speckle (dry and golden on the savanna, mossy on the tundra)
+          if (hash2(px + 11 * cj, py * 2 + ci) > 0.96) k += th === "safari" ? 0.2 : 0.18;
+          if (th === "safari" && hash2(px * 7 + ci, py * 3 + cj) > 0.985) k -= 0.18;
         }
         r *= k;
         gg *= k;
@@ -190,9 +268,10 @@ export class TerrainCache {
         img.data[i * 4 + 2] *= 0.7;
       }
       if (t === T_ROCK) {
-        img.data[i * 4] = 90;
-        img.data[i * 4 + 1] = 88;
-        img.data[i * 4 + 2] = 84;
+        const rk = this.base[T_ROCK];
+        img.data[i * 4] = rk[0] * 0.75;
+        img.data[i * 4 + 1] = rk[1] * 0.75;
+        img.data[i * 4 + 2] = rk[2] * 0.75;
       }
     }
     return img;

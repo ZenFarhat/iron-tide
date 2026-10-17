@@ -1,11 +1,14 @@
 // Two-browser multiplayer smoke test: room create/join, lockstep start, commands, desync check.
 // Usage: bun scripts/mp-test.ts [outDir] [seconds] [speed]
+// Env: FACTIONS=SD (Alice, Bob), MAP=serengeti (or "random"), URL=http://localhost:3000/
 import { chromium, type Page } from "playwright-core";
 
 const out = process.argv[2] ?? "screenshots";
 const secs = Number(process.argv[3] ?? 25);
 const speed = Number(process.argv[4] ?? 1);
 const url = process.env.URL ?? "http://localhost:3000/";
+const [facA, facB] = (process.env.FACTIONS ?? "SD").split("");
+const mapId = process.env.MAP ?? "serengeti";
 const browser = await chromium.launch({ executablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", headless: true });
 
 async function open(name: string) {
@@ -31,17 +34,21 @@ console.log("room code", code);
 await B.page.fill("#mp-code", code);
 await B.page.click("#mp-join");
 await B.page.waitForSelector("#rm-ready");
-// Bob picks Dominion, Alice Concord
-await B.page.evaluate(() => {
-  const sel = document.querySelector<HTMLSelectElement>('tr.me select[data-f="faction"]')!;
-  sel.value = "D";
+const pickFaction = (p: Page, f: string) =>
+  p.evaluate((f) => {
+    const sel = document.querySelector<HTMLSelectElement>('tr.me select[data-f="faction"]')!;
+    sel.value = f;
+    sel.dispatchEvent(new Event("change"));
+  }, f);
+await pickFaction(B.page, facB);
+await pickFaction(A.page, facA);
+await A.page.waitForTimeout(200);
+await A.page.evaluate((m) => {
+  const sel = document.querySelector<HTMLSelectElement>('select[data-s="map"]')!;
+  sel.value = m;
   sel.dispatchEvent(new Event("change"));
-});
-await A.page.evaluate(() => {
-  const sel = document.querySelector<HTMLSelectElement>('tr.me select[data-f="faction"]')!;
-  sel.value = "C";
-  sel.dispatchEvent(new Event("change"));
-});
+}, mapId);
+await A.page.waitForTimeout(300);
 if (speed !== 1)
   await A.page.evaluate((v) => {
     const sel = document.querySelector<HTMLSelectElement>('select[data-s="speed"]')!;
@@ -88,7 +95,7 @@ for (const p of [A.page, B.page])
   await p.evaluate(() => {
     const g = (window as any).__ironTide.game;
     const fac = g.world.players[g.me].faction;
-    g.send({ c: "build", type: fac === "C" ? "c_power" : "d_power" });
+    g.send({ c: "build", type: fac.toLowerCase() + "_power" });
     const inf = g.world.ents.filter((e: any) => e.owner === g.me && e.kind === "inf").map((e: any) => e.id);
     g.send({ c: "move", ids: inf, x: Math.floor(g.world.map.w / 2), y: Math.floor(g.world.map.h / 2) });
   });
@@ -112,12 +119,13 @@ const drive = (p: Page) =>
         }
       }
     }
-    const order = me.faction === "C" ? ["c_power", "c_refinery", "c_barracks", "c_factory"] : ["d_power", "d_refinery", "d_barracks", "d_factory"];
+    const f = me.faction.toLowerCase();
+    const order = [f + "_power", f + "_refinery", f + "_barracks", f + "_factory"];
     if (!me.queues.bld.length && !me.ready.bld) {
       const t = order.find((id) => w.canBuild(me, id) && !w.ents.some((e: any) => e.owner === g.me && e.type === id));
       if (t) g.send({ c: "build", type: t });
     }
-    const inf = me.faction === "C" ? "c_trooper" : "d_levy";
+    const inf = ({ C: "c_trooper", D: "d_levy", S: "s_raider" } as Record<string, string>)[me.faction];
     if (w.canBuild(me, inf) && me.queues.inf.length < 2) g.send({ c: "build", type: inf, n: 2 });
     const army = w.ents.filter((e: any) => e.owner === g.me && e.kind === "inf").map((e: any) => e.id);
     if (army.length) g.send({ c: Math.random() < 0.5 ? "amove" : "move", ids: army, x: Math.floor(Math.random() * w.map.w), y: Math.floor(Math.random() * w.map.h) });

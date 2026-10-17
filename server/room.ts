@@ -1,12 +1,16 @@
 // A game room: lobby management plus the server-clocked lockstep turn relay.
 import type { ServerWebSocket } from "bun";
 import { sanitizeCommand } from "../sim/commands";
+import { FACTIONS } from "../sim/rules";
+import { THEMES } from "../sim/map";
+import { mapDef } from "../sim/maps";
 import {
   DEFAULT_LOBBY,
   GAME_SPEEDS,
   MAX_SLOTS,
   PLAYER_COLORS,
   TURN_MS,
+  rollFaction,
   type ClientMsg,
   type LobbySettings,
   type RoomState,
@@ -166,7 +170,7 @@ export class Room {
         const mine = s.kind === "human" && s.clientId === ws.data.id;
         const hostAi = s.kind === "ai" && this.isHost(ws);
         if (!mine && !hostAi) return;
-        if (msg.faction === "C" || msg.faction === "D" || msg.faction === "R") s.faction = msg.faction;
+        if (msg.faction === "R" || FACTIONS.some((f) => f.id === msg.faction)) s.faction = msg.faction!;
         if (typeof msg.color === "number" && msg.color >= 0 && msg.color < PLAYER_COLORS.length) {
           if (!this.slots.some((o) => o !== s && (o.kind === "human" || o.kind === "ai") && o.color === msg.color)) s.color = msg.color;
         }
@@ -207,6 +211,9 @@ export class Room {
         if (typeof st.superweapons === "boolean") this.settings.superweapons = st.superweapons;
         if (typeof st.shortGame === "boolean") this.settings.shortGame = st.shortGame;
         if (typeof st.speed === "number" && GAME_SPEEDS.includes(st.speed)) this.settings.speed = st.speed;
+        if (typeof st.map === "string" && (st.map === "random" || mapDef(st.map))) this.settings.map = st.map;
+        if (typeof st.theme === "string" && THEMES.some((t) => t.id === st.theme)) this.settings.theme = st.theme;
+        if (typeof st.wildlife === "boolean") this.settings.wildlife = st.wildlife;
         for (const s of this.slots) if (s.kind === "human" && s.clientId !== this.hostId) s.ready = false;
         this.pushState();
         break;
@@ -252,11 +259,13 @@ export class Room {
     if (filled.length < 2) return send(ws, { t: "error", msg: "Need at least two players (add an AI or wait for someone to join)." });
     const notReady = filled.filter((s) => s.kind === "human" && s.clientId !== this.hostId && !s.ready);
     if (notReady.length) return send(ws, { t: "error", msg: `Waiting for ${notReady.map((s) => s.name).join(", ")} to be ready.` });
+    const def = this.settings.map !== "random" ? mapDef(this.settings.map) : undefined;
+    if (def && filled.length > def.sym) return send(ws, { t: "error", msg: `${def.name} is for up to ${def.sym} players.` });
     this.seed = (Math.random() * 0x7fffffff) | 0;
     this.players = [];
     this.clientToPlayer.clear();
     for (const s of filled) {
-      const faction = s.faction === "R" ? (Math.random() < 0.5 ? "C" : "D") : s.faction;
+      const faction = rollFaction(s.faction);
       const idx = this.players.length;
       this.players.push({ name: s.name, faction, color: s.color, team: s.team, ai: s.kind === "ai" ? s.ai ?? "normal" : null, clientId: s.clientId });
       if (s.kind === "human" && s.clientId) this.clientToPlayer.set(s.clientId, idx);

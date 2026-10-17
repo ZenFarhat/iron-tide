@@ -808,6 +808,15 @@ label.row {
 .settings input[type="number"] {
   width: 100px;
 }
+.settings label.wide {
+  flex-basis: 100%;
+}
+.settings .map-desc {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 13px;
+  color: var(--dim);
+}
 .row-inline {
   display: flex;
   gap: 8px;

@@ -1,13 +1,18 @@
 // Run an AI-vs-AI match headlessly and print a summary. Usage:
-//   bun scripts/headless.ts [seed] [minutes] [factions e.g. CD]
+//   bun scripts/headless.ts [seed] [minutes] [factions e.g. CDS] [map id, or a biome for a random map]
 import { World } from "../sim/world";
 import { TPS } from "../sim/fixed";
+import { MAPS } from "../sim/maps";
+import type { Faction } from "../sim/rules";
+import type { Theme } from "../sim/map";
 
 const seed = Number(process.argv[2] ?? 1);
 const minutes = Number(process.argv[3] ?? 15);
-const fac = (process.argv[4] ?? "CD").split("") as ("C" | "D")[];
+const fac = (process.argv[4] ?? "CD").split("") as Faction[];
+const where = process.argv[5] ?? "temperate";
+const premade = MAPS.some((m) => m.id === where);
 const w = new World(
-  { seed, mapSize: 72, credits: 10000, startUnits: 3, superweapons: true, shortGame: true },
+  { seed, mapSize: 72, credits: 10000, startUnits: 3, superweapons: true, shortGame: true, wildlife: true, map: premade ? where : "random", theme: premade ? undefined : (where as Theme) },
   fac.map((f, i) => ({ name: `AI ${i + 1}`, faction: f, color: i, team: 0, ai: "hard" as const })),
 );
 const t0 = performance.now();
