@@ -2,7 +2,7 @@
 // commands a human would, so AI opponents work in multiplayer lockstep too.
 import type { Entity, Player } from "./entity";
 import type { World } from "./world";
-import { LEP, dist2 } from "./fixed";
+import { LEP, TPS, dist2 } from "./fixed";
 import { CONSTRUCT_TICKS, RULES, SUPERWEAPONS } from "./rules";
 
 interface AIState {
@@ -13,9 +13,33 @@ interface AIState {
   attackers: number[];
   targetId: number;
   engineerSent: number[];
-  thinkEvery: number;
   lastThink: number;
 }
+
+/** Per-difficulty knobs. Easy and normal hold back on army size, tech and aggression; hard plays flat out. */
+interface Profile {
+  thinkEvery: number; // decide every N AI ticks (one AI tick = 10 sim ticks)
+  firstWave: number; // ticks before the first attack
+  waveGap: number; // ticks between attacks
+  waveSize: number; // first wave size; grows by waveGrow per attack up to waveMax
+  waveGrow: number;
+  waveMax: number;
+  commitAll: boolean; // throw every idle unit into a wave, not just a wave's worth
+  armyCap: number; // stop training combat units once the army (queue included) is worth this many credits
+  extraHarv: number; // harvesters beyond one per refinery
+  maxHarv: number;
+  lab: boolean; // tech up to the lab: heroes, tier-3 units, top defenses
+  defenses: number; // how far down the faction's DEFENSE list to build
+  superweaponsAt: number; // tick from which superweapons are built
+  jets: number;
+}
+const MIN = 60 * TPS;
+const PROFILES: Record<NonNullable<Player["ai"]>, Profile> = {
+  easy: { thinkEvery: 3, firstWave: 8 * MIN, waveGap: 3 * MIN, waveSize: 4, waveGrow: 1, waveMax: 10, commitAll: false, armyCap: 3500, extraHarv: 0, maxHarv: 3, lab: false, defenses: 2, superweaponsAt: Infinity, jets: 0 },
+  normal: { thinkEvery: 2, firstWave: 6 * MIN, waveGap: 2.5 * MIN, waveSize: 6, waveGrow: 2, waveMax: 16, commitAll: false, armyCap: 9000, extraHarv: 1, maxHarv: 5, lab: true, defenses: 4, superweaponsAt: 15 * MIN, jets: 2 },
+  hard: { thinkEvery: 1, firstWave: 3 * MIN, waveGap: 1400, waveSize: 8, waveGrow: 3, waveMax: 24, commitAll: true, armyCap: Infinity, extraHarv: 2, maxHarv: 6, lab: true, defenses: 6, superweaponsAt: 0, jets: 4 },
+};
+const profile = (p: Player) => PROFILES[p.ai ?? "normal"];
 
 const PLAN: Record<string, string[]> = {
   C: ["c_power", "c_refinery", "c_barracks", "c_power", "c_factory", "c_refinery", "c_aircmd", "c_power", "c_depot", "c_power", "c_lab", "c_power", "c_processor", "c_power", "c_tempest", "c_power", "c_phasegate", "c_factory"],
@@ -36,16 +60,15 @@ const VEH: Record<string, [string, number][]> = {
 
 export function aiInit(w: World, p: Player) {
   const mcv = w.ents.find((e) => e.owner === p.idx && e.type === "mhv");
-  const diff = p.ai ?? "normal";
+  const prof = profile(p);
   const st: AIState = {
     baseX: mcv ? mcv.x >> 8 : 0,
     baseY: mcv ? mcv.y >> 8 : 0,
-    waveSize: diff === "easy" ? 4 : diff === "hard" ? 8 : 6,
-    nextWave: diff === "easy" ? 20 * 60 * 6 : diff === "hard" ? 20 * 60 * 3 : 20 * 60 * 4,
+    waveSize: prof.waveSize,
+    nextWave: prof.firstWave,
     attackers: [],
     targetId: 0,
     engineerSent: [],
-    thinkEvery: diff === "easy" ? 3 : 1,
     lastThink: 0,
   };
   p.aiState = st;
@@ -77,8 +100,9 @@ function pickWeighted(w: World, opts: [string, number][], p: Player, ents: Entit
 export function aiThink(w: World, p: Player) {
   const st = p.aiState as AIState;
   if (!st) return;
+  const prof = profile(p);
   st.lastThink++;
-  if (st.lastThink % st.thinkEvery !== 0) return;
+  if (st.lastThink % prof.thinkEvery !== 0) return;
   const ents = own(w, p);
   const blds = ents.filter((e) => e.kind === "bld");
   const hub = blds.find((e) => e.r.tags.includes("hub"));
@@ -112,18 +136,21 @@ export function aiThink(w: World, p: Player) {
   if (!hub && !blds.length) return;
   // 3. structures
   if (!p.queues.bld.length && !p.ready.bld && hub) {
-    const next = nextStructure(w, p, ents);
+    const next = nextStructure(w, p, ents, prof);
     if (next) w.applyCommand(p.idx, { c: "build", type: next });
   }
   // 4. defenses
   if (!p.queues.def.length && !p.ready.def && hub && p.credits > 1200 && p.tags.has("factory")) {
+    let budget = prof.defenses;
     for (const [t, n] of DEFENSE[p.faction]) {
-      if (count(ents, t) < n && w.canBuild(p, t)) {
+      const want = Math.min(n, budget);
+      budget -= want;
+      if (count(ents, t) < want && w.canBuild(p, t)) {
         w.applyCommand(p.idx, { c: "build", type: t });
         break;
       }
     }
-    if (!p.queues.def.length && p.credits > 6000) {
+    if (!p.queues.def.length && p.credits > 6000 && w.tick >= prof.superweaponsAt) {
       const sw = ["c_tempest", "c_phasegate", "d_silo", "d_bulwark"].find((t) => w.canBuild(p, t) && count(ents, t) === 0);
       if (sw) w.applyCommand(p.idx, { c: "build", type: sw });
     }
@@ -132,7 +159,7 @@ export function aiThink(w: World, p: Player) {
   const refs = blds.filter((e) => e.r.tags.includes("refinery") && e.built >= CONSTRUCT_TICKS).length;
   const harvType = p.faction === "C" ? "c_harv" : "d_harv";
   const harvs = count(ents, harvType) + p.queues.veh.filter((i) => i.type === harvType).length;
-  const wantHarv = Math.min(6, refs + (p.ai === "hard" ? 2 : 1));
+  const wantHarv = Math.min(prof.maxHarv, refs + prof.extraHarv);
   if (harvs < wantHarv && w.canBuild(p, harvType) && p.queues.veh.length < 3) w.applyCommand(p.idx, { c: "build", type: harvType });
   // 6. army production — adapt to what the enemy fields
   const reserve = p.queues.bld.length ? 400 : 0;
@@ -161,19 +188,22 @@ export function aiThink(w: World, p: Player) {
     armyValue += e.r.cost;
     if (e.kind === "inf") infValue += e.r.cost;
   }
+  let queued = 0;
+  for (const q of ["inf", "veh", "air"] as const) for (const i of p.queues[q]) if (!RULES[i.type].harvester && !RULES[i.type].engineer) queued += RULES[i.type].cost;
+  const armyRoom = armyValue + queued < prof.armyCap;
   const infCap = p.faction === "D" ? 0.4 : 0.55;
   const infOk = infValue / armyValue < infCap || !p.tags.has("factory") || p.credits > 3000;
   if (p.queues.inf.length < 2 && p.credits > 400 + reserve && infOk) {
     // capture fuel wells with engineers
     const engNeeded = w.ents.some((e) => !e.dead && e.type === "fuelwell" && e.owner < 0 && dist2(e.bx, e.by, st.baseX, st.baseY) < 30 * 30) && count(ents, "engineer") === 0 && st.engineerSent.length < 3;
-    const t = engNeeded && w.canBuild(p, "engineer") ? "engineer" : pickWeighted(w, adapt(INF[p.faction]), p, ents);
+    const t = engNeeded && w.canBuild(p, "engineer") ? "engineer" : armyRoom ? pickWeighted(w, adapt(INF[p.faction]), p, ents) : null;
     if (t) w.applyCommand(p.idx, { c: "build", type: t });
   }
-  if (p.queues.veh.length < 2 && p.credits > (p.faction === "D" ? 700 : 900) + reserve) {
+  if (armyRoom && p.queues.veh.length < 2 && p.credits > (p.faction === "D" ? 700 : 900) + reserve) {
     const t = pickWeighted(w, adapt(VEH[p.faction]), p, ents);
     if (t) w.applyCommand(p.idx, { c: "build", type: t });
   }
-  if (p.faction === "C" && p.queues.air.length < 1 && p.credits > 2000 && count(ents, "c_striker") < 4 && w.canBuild(p, "c_striker")) w.applyCommand(p.idx, { c: "build", type: "c_striker" });
+  if (armyRoom && p.faction === "C" && p.queues.air.length < 1 && p.credits > 2000 && count(ents, "c_striker") < prof.jets && w.canBuild(p, "c_striker")) w.applyCommand(p.idx, { c: "build", type: "c_striker" });
   // 7. engineers → fuel wells
   for (const e of ents) {
     if (e.type !== "engineer" || e.order !== "idle") continue;
@@ -241,15 +271,16 @@ export function aiThink(w: World, p: Player) {
   // attack waves
   st.attackers = st.attackers.filter((id) => w.get(id));
   const idle = army.filter((e) => e.order === "idle" && !e.deployed && !st.attackers.includes(e.id));
-  if (w.tick >= st.nextWave && idle.length >= st.waveSize) {
+  // a capped army that can't reach the wave size attacks with what it has
+  if (w.tick >= st.nextWave && (idle.length >= st.waveSize || (!armyRoom && idle.length >= 3))) {
     const target = enemyTarget(w, p, st);
     if (target) {
-      const ids = idle.map((e) => e.id);
+      const ids = (prof.commitAll ? idle : idle.slice(0, st.waveSize)).map((e) => e.id);
       st.attackers.push(...ids);
       st.targetId = target.id;
       w.applyCommand(p.idx, { c: "amove", ids, x: target.x >> 8, y: target.y >> 8 });
-      st.waveSize = Math.min(24, st.waveSize + (p.ai === "hard" ? 3 : 2));
-      st.nextWave = w.tick + (p.ai === "easy" ? 2400 : 1400);
+      st.waveSize = Math.min(prof.waveMax, st.waveSize + prof.waveGrow);
+      st.nextWave = w.tick + prof.waveGap;
     }
   }
   // keep attackers going
@@ -279,7 +310,7 @@ export function aiThink(w: World, p: Player) {
   }
 }
 
-function nextStructure(w: World, p: Player, ents: Entity[]): string | null {
+function nextStructure(w: World, p: Player, ents: Entity[], prof: Profile): string | null {
   const plan = PLAN[p.faction];
   const seen: Record<string, number> = {};
   for (const t of plan) {
@@ -287,6 +318,7 @@ function nextStructure(w: World, p: Player, ents: Entity[]): string | null {
     if (count(ents, t) >= seen[t]) continue;
     if (!w.canBuild(p, t)) continue;
     const r = RULES[t];
+    if ((!prof.lab && r.tags.includes("lab")) || (r.superweapon && w.tick < prof.superweaponsAt)) continue;
     if (r.cost > p.credits + 600 && r.power <= 0) return null;
     // power check
     if (r.power < 0 && p.powerOut - p.powerIn + r.power < 0) {
